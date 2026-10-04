@@ -256,13 +256,6 @@
     "sessionHash": "ae97a4d4f69b951592582ea3d66afbca2f8ed0207fbf7c4be39bb1d303ac04a2",
     "expiresAt": 1793147979153
   },
-  "aeb00604d1d57b0d173d6f1d0ba66ad754eff6bf17083a2de6349c15a7fdbe2b": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "aeb00604d1d57b0d",
-    "sessionHash": "aeb00604d1d57b0d173d6f1d0ba66ad754eff6bf17083a2de6349c15a7fdbe2b",
-    "expiresAt": 1790584779158
-  },
   "b853a57a7e4fe17d76203170366ca7478d886603fe4ac9a5d421db773ac68edd": {
     "role": "CUSTOMER",
     "customerId": "VENTY-8648",
@@ -283,13 +276,6 @@
     "sessionId": "3ab5e00d3d84ff62",
     "sessionHash": "3ab5e00d3d84ff622ffac8e3eb1e7012edd776e6fa94d90db9c02fe4ab388abd",
     "expiresAt": 1793147996266
-  },
-  "f1c28fbe9b3102418542f1e4508b218612d4cc00e0d4fbbd6df8cddcf7c22566": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "f1c28fbe9b310241",
-    "sessionHash": "f1c28fbe9b3102418542f1e4508b218612d4cc00e0d4fbbd6df8cddcf7c22566",
-    "expiresAt": 1790584796271
   },
   "1efd1bf7006242e85d4e0a7531acc6b25afd90ee762de7b91fa668ba34679b62": {
     "role": "CUSTOMER",
@@ -312,13 +298,6 @@
     "sessionHash": "6f71efb9fc624b86e003894690bebb8167736774e17dacb3b9a8b663bd4bf6d6",
     "expiresAt": 1793148025041
   },
-  "fb327b19d7bf31f36311746cc77bf2c5ef9589881362d6036778f6f5706a3f73": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "fb327b19d7bf31f3",
-    "sessionHash": "fb327b19d7bf31f36311746cc77bf2c5ef9589881362d6036778f6f5706a3f73",
-    "expiresAt": 1790584825046
-  },
   "222ed4d274a2e8d294e31a3ee231ac258129129a3bf94f89b4a1ee9c21691600": {
     "role": "CUSTOMER",
     "customerId": "VENTY-4523",
@@ -333,29 +312,6 @@
     "sessionHash": "561e2e097950d9c1283e918d3a42c0c6bd6949102bd26824f1854eff434a16c2",
     "expiresAt": 1793149799170
   },
-  "a6793cdfd6ccaf746e895f4620e14e7f08665391393827086bb900939857cb00": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "a6793cdfd6ccaf74",
-    "sessionHash": "a6793cdfd6ccaf746e895f4620e14e7f08665391393827086bb900939857cb00",
-    "expiresAt": 1790586599176
-  },
-  "1ed2b75ca38e36a907f214199a90726b628031573c188c8a2c54f0cc78180aa0": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "1ed2b75ca38e36a9",
-    "sessionHash": "1ed2b75ca38e36a907f214199a90726b628031573c188c8a2c54f0cc78180aa0",
-    "expiresAt": 1790601057493
-  },
-  "2c846c85cdef1d8d29e8decbbd9efec42ec7058914561a55ddd0c1459f820646": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "2c846c85cdef1d8d",
-    "sessionHash": "2c846c85cdef1d8d29e8decbbd9efec42ec7058914561a55ddd0c1459f820646",
-    "expiresAt": 1790601066410
-  },
   "b483e2f0641962b149a1389c41dd722e37c33d9f7cc184585fe604155688be87": {
     "role": "CUSTOMER",
     "customerId": "VENTY-8534",
@@ -369,21 +325,6 @@
     "sessionId": "16d9f9a29238e13e",
     "sessionHash": "16d9f9a29238e13e3bd60e3a9370eb184313ed6520c6274ed6839f067f64327b",
     "expiresAt": 1793151148789
-  },
-  "8c389a52dd5fe3a91ada29a4c8fb3b78d4294748d19c2ec3a1eca098ca8c8516": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "8c389a52dd5fe3a9",
-    "sessionHash": "8c389a52dd5fe3a91ada29a4c8fb3b78d4294748d19c2ec3a1eca098ca8c8516",
-    "expiresAt": 1790587948794
-  },
-  "13fcd8d88bc65aaf2b0c8d05563e298638519553fa8ba19f920072f56360df17": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "13fcd8d88bc65aaf",
-    "sessionHash": "13fcd8d88bc65aaf2b0c8d05563e298638519553fa8ba19f920072f56360df17",
-    "expiresAt": 1790602348797
   },
   "8b30b914b22fffb55dbf8e45b5bd4a29ab61ded12d703d30375e9e9462f412b7": {
     "role": "CUSTOMER",
@@ -420,14 +361,6 @@
     "sessionHash": "c2d78c8ebd00567a8524a91a61393ed13a5097adf9554e693e37e7739fbcf2ba",
     "expiresAt": 1793151282171
   },
-  "dcb970942fc275805de486cc1463de39a763e86f1aa9e465cf9beb824575f2af": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "dcb970942fc27580",
-    "sessionHash": "dcb970942fc275805de486cc1463de39a763e86f1aa9e465cf9beb824575f2af",
-    "expiresAt": 1790602482176
-  },
   "303dda428f71c9d8a1d0894d7fa048fb98882071305a485679ed3794b64a1b9c": {
     "role": "CUSTOMER",
     "customerId": "VENTY-8915",
@@ -449,27 +382,12 @@
     "sessionHash": "6e97aaf12fdd7e133c1addd1916bcca9b57dd85f1e04701e53d899f6377b596a",
     "expiresAt": 1793151315048
   },
-  "4601529cb9d96f7f71e9fb0c8adaf820162c14781600442c75b2aea1b78b4806": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "4601529cb9d96f7f",
-    "sessionHash": "4601529cb9d96f7f71e9fb0c8adaf820162c14781600442c75b2aea1b78b4806",
-    "expiresAt": 1790602515055
-  },
   "26c5a162ed2c1527d37fa7ab1046a5a2f1e86af11cf5f2343e8b94c14bb18c20": {
     "role": "CUSTOMER",
     "customerId": "VENTY-4393",
     "sessionId": "26c5a162ed2c1527",
     "sessionHash": "26c5a162ed2c1527d37fa7ab1046a5a2f1e86af11cf5f2343e8b94c14bb18c20",
     "expiresAt": 1793151315386
-  },
-  "577da7ac61ff6563bde2484dfa10a3dfea94247e0a6055a22c8db4d9116720ad": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "577da7ac61ff6563",
-    "sessionHash": "577da7ac61ff6563bde2484dfa10a3dfea94247e0a6055a22c8db4d9116720ad",
-    "expiresAt": 1790588145306
   },
   "b44405e573198f336193d5832df3c1bf0bbf2b677492e239806d35e7614a5369": {
     "role": "CUSTOMER",
@@ -484,21 +402,6 @@
     "sessionId": "fe3c40278055d5e1",
     "sessionHash": "fe3c40278055d5e1b8bff13315ab5a5709a0fdf802f17218d4462eb970aecb91",
     "expiresAt": 1793151358042
-  },
-  "d9730a880b41504a3529bc04362329d82b75de8761c64b4b82470f1c1d24ebf7": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "d9730a880b41504a",
-    "sessionHash": "d9730a880b41504a3529bc04362329d82b75de8761c64b4b82470f1c1d24ebf7",
-    "expiresAt": 1790602558048
-  },
-  "62c6cbc4ee0f70de03815ad5b8f5c04ef0640b429a75a66729de89879fb5c554": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "62c6cbc4ee0f70de",
-    "sessionHash": "62c6cbc4ee0f70de03815ad5b8f5c04ef0640b429a75a66729de89879fb5c554",
-    "expiresAt": 1790588158054
   },
   "a9fa5716f7ae1a79ddc1100947ffd08a63763afc7872e874b0b3174a95825e07": {
     "role": "CUSTOMER",
@@ -521,26 +424,47 @@
     "sessionHash": "9d450135e59c1627ecaf65d1189e6fe735cf8f75ca7493c710bf1c3bf04b64e4",
     "expiresAt": 1793151377700
   },
-  "b766e8fb8f6812de6d69d4cb0715ba624e01b639a634da9c6935047ca57ec330": {
-    "role": "STAFF",
-    "staffId": "Staff-Amine",
-    "staffName": "Amine (Head Barista)",
-    "sessionId": "b766e8fb8f6812de",
-    "sessionHash": "b766e8fb8f6812de6d69d4cb0715ba624e01b639a634da9c6935047ca57ec330",
-    "expiresAt": 1790602577707
-  },
-  "07db077a1bafe748d300026eb5fb53bbc41d78da8417cc6f2147c09fdb3de979": {
-    "role": "ADMIN",
-    "adminId": "VENTY-MANAGER-MILIANA",
-    "sessionId": "07db077a1bafe748",
-    "sessionHash": "07db077a1bafe748d300026eb5fb53bbc41d78da8417cc6f2147c09fdb3de979",
-    "expiresAt": 1790588177713
-  },
   "0bee7004618215fd92b33b494f960bbe97b6f35276fc01ca31eb2e001cf29a65": {
     "role": "CUSTOMER",
     "customerId": "VENTY-4240",
     "sessionId": "0bee7004618215fd",
     "sessionHash": "0bee7004618215fd92b33b494f960bbe97b6f35276fc01ca31eb2e001cf29a65",
     "expiresAt": 1793151378108
+  },
+  "bee64c78013ac7ba962067e1508011608480a2020c904bf0b91e941fc48bff27": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "bee64c78013ac7ba",
+    "sessionHash": "bee64c78013ac7ba962067e1508011608480a2020c904bf0b91e941fc48bff27",
+    "expiresAt": 1791158055523
+  },
+  "01b42fe230c9464cc42764772e915ab9519ca3504a9ae719983494afe77fbcf2": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "01b42fe230c9464c",
+    "sessionHash": "01b42fe230c9464cc42764772e915ab9519ca3504a9ae719983494afe77fbcf2",
+    "expiresAt": 1791158060743
+  },
+  "89c8d61c7cdb74d5a8c220b405f09c068ba326a058e4c55c76b7a1a5510df36b": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "89c8d61c7cdb74d5",
+    "sessionHash": "89c8d61c7cdb74d5a8c220b405f09c068ba326a058e4c55c76b7a1a5510df36b",
+    "expiresAt": 1791158060764
+  },
+  "5181c85c1b03190dfd369444dada488aa3248ff15a448da2f7f1d5e7291aa96d": {
+    "role": "CUSTOMER",
+    "customerId": "VENTY-7249",
+    "sessionId": "5181c85c1b03190d",
+    "sessionHash": "5181c85c1b03190dfd369444dada488aa3248ff15a448da2f7f1d5e7291aa96d",
+    "expiresAt": 1793721387029
+  },
+  "b8845b858897b85c0a1427ad9ff46bedb605f37fb3ec4404648678d13153fb63": {
+    "role": "STAFF",
+    "staffId": "Staff-Amine",
+    "staffName": "Amine (Head Barista)",
+    "sessionId": "b8845b858897b85c",
+    "sessionHash": "b8845b858897b85c0a1427ad9ff46bedb605f37fb3ec4404648678d13153fb63",
+    "expiresAt": 1791172587044
   }
 }

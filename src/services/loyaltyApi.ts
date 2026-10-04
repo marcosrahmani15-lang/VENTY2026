@@ -33,7 +33,7 @@ export const getClientDeviceId = (): string => {
   return devId;
 };
 
-const OPAQUE_SESSION_TOKEN_PATTERN = /^vty_sess_[0-9a-f]{48,64}$/;
+const OPAQUE_SESSION_TOKEN_PATTERN = /^vty_sess_[0-9a-f]{32,128}$/;
 
 // In-memory store for Staff/Admin session tokens so management tokens/credentials never touch localStorage
 const memoryManagementSessionTokens: {
@@ -46,55 +46,67 @@ const memoryManagementSessionTokens: {
 
 export const getSessionToken = (role: 'CUSTOMER' | 'STAFF' | 'ADMIN'): string | null => {
   if (typeof window === 'undefined') return null;
-  if (role === 'ADMIN') {
-    if (memoryManagementSessionTokens.ADMIN) return memoryManagementSessionTokens.ADMIN;
-    const stored = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-    return stored && OPAQUE_SESSION_TOKEN_PATTERN.test(stored) ? stored : null;
+  try {
+    if (role === 'ADMIN') {
+      if (memoryManagementSessionTokens.ADMIN) return memoryManagementSessionTokens.ADMIN;
+      const stored = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+      return stored && OPAQUE_SESSION_TOKEN_PATTERN.test(stored) ? stored : null;
+    }
+    if (role === 'STAFF') {
+      if (memoryManagementSessionTokens.STAFF) return memoryManagementSessionTokens.STAFF;
+      const stored = sessionStorage.getItem(STAFF_TOKEN_KEY);
+      return stored && OPAQUE_SESSION_TOKEN_PATTERN.test(stored) ? stored : null;
+    }
+    const customerToken = localStorage.getItem(CUSTOMER_TOKEN_KEY);
+    return customerToken && OPAQUE_SESSION_TOKEN_PATTERN.test(customerToken) ? customerToken : null;
+  } catch {
+    return role === 'ADMIN' ? memoryManagementSessionTokens.ADMIN : role === 'STAFF' ? memoryManagementSessionTokens.STAFF : null;
   }
-  if (role === 'STAFF') {
-    if (memoryManagementSessionTokens.STAFF) return memoryManagementSessionTokens.STAFF;
-    const stored = sessionStorage.getItem(STAFF_TOKEN_KEY);
-    return stored && OPAQUE_SESSION_TOKEN_PATTERN.test(stored) ? stored : null;
-  }
-  const customerToken = localStorage.getItem(CUSTOMER_TOKEN_KEY);
-  return customerToken && OPAQUE_SESSION_TOKEN_PATTERN.test(customerToken) ? customerToken : null;
 };
 
 export const setSessionToken = (role: 'CUSTOMER' | 'STAFF' | 'ADMIN', token: string): void => {
   if (typeof window === 'undefined') return;
   // Never store anything other than a server-issued opaque session token
   if (!token || !OPAQUE_SESSION_TOKEN_PATTERN.test(token)) return;
-  if (role === 'ADMIN') {
-    memoryManagementSessionTokens.ADMIN = token;
-    memoryManagementSessionTokens.STAFF = null;
-    sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-    sessionStorage.removeItem(STAFF_TOKEN_KEY);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    localStorage.removeItem(STAFF_TOKEN_KEY);
-  } else if (role === 'STAFF') {
-    memoryManagementSessionTokens.STAFF = token;
-    memoryManagementSessionTokens.ADMIN = null;
-    sessionStorage.setItem(STAFF_TOKEN_KEY, token);
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    localStorage.removeItem(STAFF_TOKEN_KEY);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-  } else {
-    localStorage.setItem(CUSTOMER_TOKEN_KEY, token);
+  try {
+    if (role === 'ADMIN') {
+      memoryManagementSessionTokens.ADMIN = token;
+      memoryManagementSessionTokens.STAFF = null;
+      sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+      sessionStorage.removeItem(STAFF_TOKEN_KEY);
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      localStorage.removeItem(STAFF_TOKEN_KEY);
+    } else if (role === 'STAFF') {
+      memoryManagementSessionTokens.STAFF = token;
+      memoryManagementSessionTokens.ADMIN = null;
+      sessionStorage.setItem(STAFF_TOKEN_KEY, token);
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      localStorage.removeItem(STAFF_TOKEN_KEY);
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    } else {
+      localStorage.setItem(CUSTOMER_TOKEN_KEY, token);
+    }
+  } catch {
+    // If browser storage throws quota/security exceptions, keep in-memory token active
   }
 };
 
 export const clearSessionToken = (role: 'CUSTOMER' | 'STAFF' | 'ADMIN'): void => {
   if (typeof window === 'undefined') return;
-  if (role === 'ADMIN') {
-    memoryManagementSessionTokens.ADMIN = null;
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-  } else if (role === 'STAFF') {
-    memoryManagementSessionTokens.STAFF = null;
-    sessionStorage.removeItem(STAFF_TOKEN_KEY);
-    localStorage.removeItem(STAFF_TOKEN_KEY);
-  } else {
-    localStorage.removeItem(CUSTOMER_TOKEN_KEY);
+  try {
+    if (role === 'ADMIN') {
+      memoryManagementSessionTokens.ADMIN = null;
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    } else if (role === 'STAFF') {
+      memoryManagementSessionTokens.STAFF = null;
+      sessionStorage.removeItem(STAFF_TOKEN_KEY);
+      localStorage.removeItem(STAFF_TOKEN_KEY);
+    } else {
+      localStorage.removeItem(CUSTOMER_TOKEN_KEY);
+    }
+  } catch {
+    // Ignore storage errors on cleanup
   }
 };
 
@@ -104,7 +116,16 @@ const apiFetch = async <T>(
   options: RequestInit = {},
   role: 'CUSTOMER' | 'STAFF' | 'ADMIN' = 'CUSTOMER',
 ): Promise<T> => {
-  const token = getSessionToken(role);
+  // Do not send stale Bearer tokens on authentication/login endpoints
+  const isAuthLoginEndpoint =
+    url.includes('/auth/admin') ||
+    url.includes('/auth/staff') ||
+    url.includes('/auth/login') ||
+    url.includes('/request-otp') ||
+    url.includes('/verify-otp') ||
+    url.includes('/verify');
+
+  const token = isAuthLoginEndpoint ? null : getSessionToken(role);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-venty-device-id': getClientDeviceId(),

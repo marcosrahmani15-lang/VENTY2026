@@ -424,6 +424,10 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
       const msg = String(err?.message || '');
       if (msg.includes('VENTY_ADMIN_SECRET is not configured')) {
         setAuthError('VENTY_ADMIN_SECRET is not configured.');
+      } else if (err?.status === 429 || msg.toLowerCase().includes('too many') || msg.toLowerCase().includes('temporarily restricted')) {
+        setAuthError(msg || 'Too many failed login attempts. Please wait a moment.');
+      } else if (msg && msg !== 'Unauthorized') {
+        setAuthError(msg);
       } else {
         setAuthError('Invalid admin secret.');
       }

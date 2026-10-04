@@ -119,8 +119,13 @@ const timingSafeSecretEquals = (candidate: string, configuredSecret: string): bo
   ) {
     return false;
   }
-  const hashA = crypto.createHash('sha256').update(candidate, 'utf8').digest();
-  const hashB = crypto.createHash('sha256').update(configuredSecret, 'utf8').digest();
+  const cleanCandidate = candidate.trim();
+  const cleanConfigured = configuredSecret.trim();
+  if (!cleanCandidate || !cleanConfigured) {
+    return false;
+  }
+  const hashA = crypto.createHash('sha256').update(cleanCandidate, 'utf8').digest();
+  const hashB = crypto.createHash('sha256').update(cleanConfigured, 'utf8').digest();
   return crypto.timingSafeEqual(hashA, hashB);
 };
 
@@ -3406,7 +3411,7 @@ app.post('/api/orders', (req: Request, res: Response) => {
 });
 
 // GET Customer's Own Order History ("My Orders" — Strictly Isolated to Authenticated Customer)
-app.get('/api/orders/my-orders', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (req: Request, res: Response) => {
+app.get('/api/orders/my-orders', requireRole(['CUSTOMER']), (req: Request, res: Response) => {
   const db = loadDatabase();
   const queryCustomerId = (req.query.customerId as string) || '';
 
