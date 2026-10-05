@@ -466,5 +466,33 @@
     "sessionId": "b8845b858897b85c",
     "sessionHash": "b8845b858897b85c0a1427ad9ff46bedb605f37fb3ec4404648678d13153fb63",
     "expiresAt": 1791172587044
+  },
+  "73917d1acf50b172e2a39e72ed78a1a767fdb38d87d8d9df3ce2d81234e96128": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "73917d1acf50b172",
+    "sessionHash": "73917d1acf50b172e2a39e72ed78a1a767fdb38d87d8d9df3ce2d81234e96128",
+    "expiresAt": 1791158292252
+  },
+  "77565c03066d3d9baf65f6358d7396870de2726a3693d1ee0a4081a3d4346618": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "77565c03066d3d9b",
+    "sessionHash": "77565c03066d3d9baf65f6358d7396870de2726a3693d1ee0a4081a3d4346618",
+    "expiresAt": 1791159543939
+  },
+  "e9e7683a1a6c112d9bb17adfbf1cf27fe0a37f1e50e8c65b4aab12266220011e": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "e9e7683a1a6c112d",
+    "sessionHash": "e9e7683a1a6c112d9bb17adfbf1cf27fe0a37f1e50e8c65b4aab12266220011e",
+    "expiresAt": 1791159551401
+  },
+  "05d89e6268d4cf0058d8c5ef7cc906099adfd8b94374386cee190b2ab636867f": {
+    "role": "ADMIN",
+    "adminId": "VENTY-MANAGER-MILIANA",
+    "sessionId": "05d89e6268d4cf00",
+    "sessionHash": "05d89e6268d4cf0058d8c5ef7cc906099adfd8b94374386cee190b2ab636867f",
+    "expiresAt": 1791159587185
   }
 }

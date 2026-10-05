@@ -162,7 +162,7 @@ export const Footer: React.FC<FooterProps> = ({
               }}
               className="text-xs font-sans text-[#b8a698] hover:text-[#faf6ef] underline-offset-4 hover:underline transition-colors cursor-pointer"
             >
-              Staff / Admin Login
+              Management
             </a>
           </div>
 

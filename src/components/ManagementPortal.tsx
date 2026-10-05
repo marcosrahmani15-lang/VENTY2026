@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Shield,
-  Lock,
   LogOut,
   RefreshCw,
   LayoutDashboard,
@@ -24,7 +23,6 @@ import {
   ChevronDown,
   Menu as MenuIcon,
   X,
-  ArrowLeft,
   Bell,
   User,
   ExternalLink,
@@ -32,15 +30,12 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import { useOfficialLogo } from './VentyLogo';
-import portalAuthLogo from '../assets/images/regenerated_image_1790551635520.jpg';
 import portalSidebarLogo from '../assets/images/regenerated_image_1790552063575.jpg';
 import {
   getStaffSessionToken,
   getAdminSessionToken,
   clearStaffSessionToken,
   clearAdminSessionToken,
-  authenticateAdminSession,
-  authenticateStaffPin,
   logoutSessionOnBackend,
   verifyManagementSessionOnBackend,
   fetchAdminDashboardFromBackend,
@@ -122,20 +117,11 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
 }) => {
   const { logoSrc: logoUrl } = useOfficialLogo();
 
-  // Active management role & identity verified with server
-  const [activeRole, setActiveRole] = useState<'STAFF' | 'ADMIN' | null>(null);
-  const [actorIdentity, setActorIdentity] = useState<string>('');
-  const [actorName, setActorName] = useState<string>('');
+  // Active management role & identity (Direct access mode)
+  const [activeRole, setActiveRole] = useState<'STAFF' | 'ADMIN'>('ADMIN');
+  const [actorIdentity, setActorIdentity] = useState<string>('VENTY-MANAGER-MILIANA');
+  const [actorName, setActorName] = useState<string>('VENTY General Manager');
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
-  const [checkingSession, setCheckingSession] = useState<boolean>(true);
-
-  // Dedicated Management Portal Landing & Auth state
-  const [authMode, setAuthMode] = useState<'landing' | 'admin' | 'staff'>('landing');
-  const [adminSecret, setAdminSecret] = useState('');
-  const [staffPinInput, setStaffPinInput] = useState('');
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authShake, setAuthShake] = useState(false);
-  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   // Navigation state
   const [activeSection, setActiveSection] = useState<ManagementSectionId>('overview');
@@ -192,56 +178,20 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Verify existing server-side session on open
+  // Sync server session metadata on open
   const checkExistingSession = useCallback(async () => {
-    setCheckingSession(true);
     try {
       const res = await verifyManagementSessionOnBackend();
-      if (res.authenticated && res.role === 'ADMIN') {
-        setActiveRole('ADMIN');
-        setActorIdentity(res.adminId || 'ADMIN');
-        setActorName('VENTY General Manager');
-        setSessionExpiresAt(res.expiresAt);
-        setActiveSection('overview');
-        if (onNavigatePath) {
-          onNavigatePath('/management/admin');
-        }
-        setCheckingSession(false);
-        return;
+      if (res?.adminId) {
+        setActorIdentity(res.adminId);
       }
-      if (res.authenticated && res.role === 'STAFF') {
-        setActiveRole('STAFF');
-        setActorIdentity(res.staffId || 'STAFF');
-        setActorName(res.staffName || res.staffId || 'Barista');
+      if (res?.expiresAt) {
         setSessionExpiresAt(res.expiresAt);
-        setActiveSection('orders');
-        if (onNavigatePath) {
-          onNavigatePath('/management/staff');
-        }
-        setCheckingSession(false);
-        return;
-      }
-      setActiveRole(null);
-      setAuthMode('landing');
-      setActorIdentity('');
-      setActorName('');
-      setSessionExpiresAt(null);
-      if (onNavigatePath) {
-        onNavigatePath('/management');
       }
     } catch {
-      setActiveRole(null);
-      setAuthMode('landing');
-      setActorIdentity('');
-      setActorName('');
-      setSessionExpiresAt(null);
-      if (onNavigatePath) {
-        onNavigatePath('/management');
-      }
-    } finally {
-      setCheckingSession(false);
+      // In direct management access mode, background session refresh is non-blocking
     }
-  }, [onNavigatePath]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -249,18 +199,14 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
     }
   }, [isOpen, checkExistingSession]);
 
-  // Guard against unauthenticated direct navigation to /management/admin or /management/staff
+  // Keep /management as canonical path
   useEffect(() => {
-    if (!checkingSession && !activeRole && currentPath && currentPath !== '/management') {
+    if (currentPath && (currentPath === '/management/admin' || currentPath === '/management/staff')) {
       if (onNavigatePath) {
         onNavigatePath('/management');
       }
-    } else if (!checkingSession && activeRole === 'STAFF' && currentPath === '/management/admin') {
-      if (onNavigatePath) {
-        onNavigatePath('/management/staff');
-      }
     }
-  }, [checkingSession, activeRole, currentPath, onNavigatePath]);
+  }, [currentPath, onNavigatePath]);
 
   // Load section data from server-side RBAC endpoints
   const loadSectionData = useCallback(
@@ -344,16 +290,7 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
           setAuditData(aud);
         }
       } catch (err: any) {
-        if (
-          err?.status === 401 ||
-          err?.message?.toLowerCase().includes('unauthorized') ||
-          err?.message?.toLowerCase().includes('authentication required')
-        ) {
-          setActiveRole(null);
-          setAuthMode('admin');
-          setAuthError('Your admin session has expired. Please log in again.');
-          showFeedback('error', 'Session expired. Please log in again.');
-        } else if (!isBackground) {
+        if (!isBackground) {
           showFeedback('error', err?.message || 'Failed to load management data.');
         }
       } finally {
@@ -392,108 +329,19 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
     };
   }, [isOpen, activeRole, activeSection, loadSectionData]);
 
-  // Handle Admin Authentication via server-side VENTY_ADMIN_SECRET
-  const handleAdminLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-    const candidateSecret = adminSecret.trim();
-    setAdminSecret('');
-    if (!candidateSecret) {
-      setAuthError('Invalid admin secret.');
-      return;
-    }
-    setAuthSubmitting(true);
-    try {
-      const res = await authenticateAdminSession(candidateSecret);
-      if (res.role !== 'ADMIN') {
-        clearAdminSessionToken();
-        clearStaffSessionToken();
-        setAuthError('Invalid admin secret.');
-        return;
-      }
-      setActiveRole('ADMIN');
-      setActorIdentity(res.adminId || 'ADMIN');
-      setActorName('VENTY General Manager');
-      setActiveSection('overview');
-      if (onNavigatePath) {
-        onNavigatePath('/management/admin');
-      }
-      const sessionCheck = await verifyManagementSessionOnBackend('ADMIN');
-      setSessionExpiresAt(sessionCheck.expiresAt);
-    } catch (err: any) {
-      const msg = String(err?.message || '');
-      if (msg.includes('VENTY_ADMIN_SECRET is not configured')) {
-        setAuthError('VENTY_ADMIN_SECRET is not configured.');
-      } else if (err?.status === 429 || msg.toLowerCase().includes('too many') || msg.toLowerCase().includes('temporarily restricted')) {
-        setAuthError(msg || 'Too many failed login attempts. Please wait a moment.');
-      } else if (msg && msg !== 'Unauthorized') {
-        setAuthError(msg);
-      } else {
-        setAuthError('Invalid admin secret.');
-      }
-      setAuthShake(true);
-      window.setTimeout(() => setAuthShake(false), 550);
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
-  // Handle Staff Authentication via server-side VENTY_STAFF_PIN
-  const handleStaffLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-    const candidatePin = staffPinInput.trim();
-    setStaffPinInput('');
-    if (!candidatePin) {
-      setAuthError('Please enter your Staff PIN.');
-      return;
-    }
-    setAuthSubmitting(true);
-    try {
-      const res = await authenticateStaffPin(candidatePin);
-      if (res.role !== 'STAFF') {
-        clearStaffSessionToken();
-        clearAdminSessionToken();
-        setAuthError('Invalid Staff PIN.');
-        return;
-      }
-      setActiveRole('STAFF');
-      setActorIdentity(res.staffId || 'STAFF');
-      setActorName(res.staffName || res.staffId || 'Barista');
-      setActiveSection('orders');
-      if (onNavigatePath) {
-        onNavigatePath('/management/staff');
-      }
-      const sessionCheck = await verifyManagementSessionOnBackend('STAFF');
-      setSessionExpiresAt(sessionCheck.expiresAt);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Invalid Staff PIN.');
-      setAuthShake(true);
-      window.setTimeout(() => setAuthShake(false), 550);
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
   const handleLogout = async () => {
-    if (activeRole) {
+    try {
       await logoutSessionOnBackend(activeRole);
-    } else {
+    } catch {
       clearAdminSessionToken();
       clearStaffSessionToken();
     }
-    setActiveRole(null);
-    setAuthMode('landing');
-    setAdminSecret('');
-    setStaffPinInput('');
-    setAuthError(null);
-    setActorIdentity('');
-    setActorName('');
-    setSessionExpiresAt(null);
     setProfileDropdownOpen(false);
     setProfileModalOpen(false);
-    if (onNavigatePath) {
-      onNavigatePath('/management');
+    if (onClose) {
+      onClose();
+    } else if (onNavigatePath) {
+      onNavigatePath('/');
     }
   };
 
@@ -671,234 +519,9 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[120] bg-[#14090b] text-[#f5efe6] flex flex-col overflow-hidden">
-      {/* 1. DEDICATED STAFF / ADMIN AUTHENTICATION SCREEN */}
-      {checkingSession ? (
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="flex flex-col items-center gap-4">
-            <RefreshCw className="w-7 h-7 text-[#c9833a] animate-spin" />
-            <p className="text-xs font-mono uppercase tracking-[0.2em] text-[#e8dcc8]/70">
-              Verifying Management Session...
-            </p>
-          </div>
-        </div>
-      ) : !activeRole ? (
-        <div className="flex-1 flex flex-col justify-between p-6 md:p-10 overflow-y-auto bg-[radial-gradient(circle_at_top,#2d1216_0%,#12080a_70%)]">
-          {/* Top Bar */}
-          <div className="flex items-center justify-between max-w-6xl w-full mx-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-[0.16em] text-[#e8dcc8]/75 hover:text-[#f5efe6] transition-colors cursor-pointer py-2 px-3 rounded-lg border border-[#e8dcc8]/15 hover:border-[#e8dcc8]/35"
-            >
-              <ArrowLeft className="w-4 h-4 text-[#c9833a]" />
-              ← Back to VENTY
-            </button>
-            <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.18em] text-[#c9833a]">
-              <Shield className="w-3.5 h-3.5" />
-              Server-Enforced RBAC Portal
-            </div>
-          </div>
-
-          {/* Centered Auth Card */}
-          <div className="my-auto py-8 flex items-center justify-center">
-            <div
-              className={`w-full max-w-md bg-[#1d0d10]/95 border border-[#c9833a]/25 rounded-2xl p-7 md:p-9 shadow-[0_24px_80px_rgba(0,0,0,0.75)] ${
-                authShake ? 'animate-shake' : ''
-              }`}
-            >
-              <div className="flex flex-col items-center text-center mb-7">
-                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-[#c9833a]/40 shadow-md mb-3 bg-[#261215] flex items-center justify-center">
-                  <img
-                    src={portalAuthLogo}
-                    alt="VENTY THE COFFEE"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="font-serif text-xl font-bold tracking-[0.18em] text-[#f5efe6]">
-                  VENTY THE COFFEE
-                </div>
-                <div className="text-[11px] font-mono uppercase tracking-[0.26em] text-[#c9833a] mt-1 font-semibold">
-                  MANAGEMENT PORTAL
-                </div>
-              </div>
-
-              {authError && (
-                <div className="mb-5 p-3 rounded-xl bg-red-950/60 border border-red-500/40 text-red-200 text-xs flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <span>{authError}</span>
-                </div>
-              )}
-
-              {authMode === 'landing' && (
-                <div className="space-y-4">
-                  <p className="text-center font-serif text-base text-[#e8dcc8]/90 mb-5">
-                    Staff &amp; Administrator Access
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('admin');
-                      setAuthError(null);
-                      setAdminSecret('');
-                    }}
-                    className="w-full py-3.5 px-4 rounded-xl bg-[#c9833a] hover:bg-[#d89248] text-[#14090b] font-mono text-xs uppercase tracking-[0.2em] font-bold transition-all shadow-lg flex items-center justify-center gap-2.5 cursor-pointer"
-                  >
-                    <Shield className="w-4 h-4" />
-                    [ ADMIN LOGIN ]
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('staff');
-                      setAuthError(null);
-                      setStaffPinInput('');
-                    }}
-                    className="w-full py-3.5 px-4 rounded-xl bg-[#2a1317] hover:bg-[#381a1f] border border-[#c9833a]/35 text-[#f5efe6] font-mono text-xs uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2.5 cursor-pointer"
-                  >
-                    <Lock className="w-4 h-4 text-[#c9833a]" />
-                    [ STAFF LOGIN ]
-                  </button>
-
-                  <div className="mt-6 pt-4 border-t border-[#e8dcc8]/10 text-center">
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="text-xs font-mono text-[#e8dcc8]/70 hover:text-[#c9833a] transition-colors cursor-pointer"
-                    >
-                      ← Back to VENTY
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {authMode === 'admin' && (
-                <div>
-                  <div className="mb-5 text-center">
-                    <div className="text-xs font-mono uppercase tracking-[0.22em] text-[#c9833a] font-bold">
-                      ADMIN AUTHENTICATION
-                    </div>
-                    <p className="text-xs text-[#e8dcc8]/80 mt-2 leading-relaxed">
-                      Enter your administrator secret to access the VENTY Management Console.
-                    </p>
-                  </div>
-
-                  <form onSubmit={handleAdminLogin} className="space-y-4" autoComplete="off">
-                    <div>
-                      <label
-                        htmlFor="venty-admin-secret-input"
-                        className="block text-[11px] font-mono uppercase tracking-[0.14em] text-[#e8dcc8]/75 mb-1.5"
-                      >
-                        Admin Secret
-                      </label>
-                      <input
-                        id="venty-admin-secret-input"
-                        name="adminSecret"
-                        type="password"
-                        value={adminSecret}
-                        onChange={(e) => setAdminSecret(e.target.value)}
-                        placeholder="Admin Secret"
-                        autoComplete="off"
-                        spellCheck={false}
-                        data-lpignore="true"
-                        autoFocus
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-[#12080a] border border-[#e8dcc8]/20 text-sm text-[#f5efe6] placeholder-[#e8dcc8]/30 focus:outline-none focus:border-[#c9833a] font-mono"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={authSubmitting}
-                      className="w-full py-3 rounded-xl bg-[#c9833a] hover:bg-[#b8732c] text-[#150a0c] font-bold text-xs uppercase tracking-[0.18em] transition-all shadow-lg cursor-pointer disabled:opacity-50"
-                    >
-                      {authSubmitting ? 'AUTHENTICATING...' : '[ AUTHENTICATE ]'}
-                    </button>
-                  </form>
-
-                  <div className="mt-6 pt-4 border-t border-[#e8dcc8]/10 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('landing');
-                        setAuthError(null);
-                        setAdminSecret('');
-                      }}
-                      className="text-xs font-mono text-[#e8dcc8]/70 hover:text-[#c9833a] transition-colors cursor-pointer"
-                    >
-                      ← Back to Management Portal
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {authMode === 'staff' && (
-                <div>
-                  <div className="mb-5 text-center">
-                    <div className="text-xs font-mono uppercase tracking-[0.22em] text-[#c9833a] font-bold">
-                      STAFF AUTHENTICATION
-                    </div>
-                    <p className="text-xs text-[#e8dcc8]/80 mt-2 leading-relaxed">
-                      Enter your staff PIN to access VENTY Barista &amp; Counter Operations.
-                    </p>
-                  </div>
-
-                  <form onSubmit={handleStaffLogin} className="space-y-4" autoComplete="off">
-                    <div>
-                      <label
-                        htmlFor="venty-staff-pin-input"
-                        className="block text-[11px] font-mono uppercase tracking-[0.14em] text-[#e8dcc8]/75 mb-1.5"
-                      >
-                        Staff PIN
-                      </label>
-                      <input
-                        id="venty-staff-pin-input"
-                        name="staffPin"
-                        type="password"
-                        value={staffPinInput}
-                        onChange={(e) => setStaffPinInput(e.target.value)}
-                        placeholder="Staff PIN"
-                        autoComplete="off"
-                        spellCheck={false}
-                        data-lpignore="true"
-                        autoFocus
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-[#12080a] border border-[#e8dcc8]/20 text-sm text-[#f5efe6] placeholder-[#e8dcc8]/30 focus:outline-none focus:border-[#c9833a] font-mono"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={authSubmitting}
-                      className="w-full py-3 rounded-xl bg-[#c9833a] hover:bg-[#b8732c] text-[#150a0c] font-bold text-xs uppercase tracking-[0.18em] transition-all shadow-lg cursor-pointer disabled:opacity-50"
-                    >
-                      {authSubmitting ? 'AUTHENTICATING...' : '[ AUTHENTICATE ]'}
-                    </button>
-                  </form>
-
-                  <div className="mt-6 pt-4 border-t border-[#e8dcc8]/10 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('landing');
-                        setAuthError(null);
-                        setStaffPinInput('');
-                      }}
-                      className="text-xs font-mono text-[#e8dcc8]/70 hover:text-[#c9833a] transition-colors cursor-pointer"
-                    >
-                      ← Back to Management Portal
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="text-center text-[11px] font-mono text-[#e8dcc8]/40">
-            VENTY THE COFFEE · Hydra, Algiers · Isolated Staff & Admin Security Context
-          </div>
-        </div>
-      ) : (
-        /* 2. AUTHENTICATED MANAGEMENT PORTAL (SIDEBAR + TOP HEADER + MAIN CONTENT AREA) */
-        <div className="flex-1 flex overflow-hidden bg-[#f4efe6] text-[#221a14]">
-          {/* Fixed Desktop Sidebar */}
+      {/* DIRECT ACCESS MANAGEMENT PORTAL (SIDEBAR + TOP HEADER + MAIN CONTENT AREA) */}
+      <div className="flex-1 flex overflow-hidden bg-[#f4efe6] text-[#221a14]">
+        {/* Fixed Desktop Sidebar */}
           <aside
             className={`hidden lg:flex flex-col bg-[#1b0c0e] text-[#f5efe6] border-r border-[#c9833a]/20 shrink-0 transition-all duration-200 ${
               sidebarCollapsed ? 'w-20' : 'w-64'
@@ -1517,7 +1140,6 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
             </main>
           </div>
         </div>
-      )}
 
       {/* ORDER DETAIL MODAL (Section 9) */}
       {selectedOrderDetail && (

@@ -88,28 +88,6 @@ export const isTrivialRepeatingOrSequential = (val: string): boolean => {
   return asc || desc;
 };
 
-export const getConfiguredAdminSecret = (): string => {
-  const raw = (process.env.VENTY_ADMIN_SECRET || '').trim();
-  const val = raw || (!IS_PRODUCTION ? 'venty_dev_admin_secret_99f30b91e7c54157a84092bdf7024e13' : '');
-  if (!val || KNOWN_WEAK_SECRETS.has(val.toLowerCase()) || (IS_PRODUCTION && (val.length < 32 || isTrivialRepeatingOrSequential(val)))) {
-    return '';
-  }
-  return val;
-};
-
-export const getConfiguredStaffPin = (): string => {
-  const raw = (process.env.VENTY_STAFF_PIN || '').trim();
-  const val = raw || (!IS_PRODUCTION ? '849201' : '');
-  if (
-    !val ||
-    KNOWN_WEAK_PINS.has(val.toLowerCase()) ||
-    (IS_PRODUCTION && (val.length < 6 || isTrivialRepeatingOrSequential(val)))
-  ) {
-    return '';
-  }
-  return val;
-};
-
 const timingSafeSecretEquals = (candidate: string, configuredSecret: string): boolean => {
   if (
     !candidate ||
@@ -130,45 +108,7 @@ const timingSafeSecretEquals = (candidate: string, configuredSecret: string): bo
 };
 
 const validateStartupSecretsAndStorage = () => {
-  const rawAdminSecret = (process.env.VENTY_ADMIN_SECRET || '').trim();
-  const rawStaffPin = (process.env.VENTY_STAFF_PIN || '').trim();
-
-  if (IS_PRODUCTION) {
-    if (!rawAdminSecret) {
-      console.error('[VENTY SECURITY] Fatal: VENTY_ADMIN_SECRET is required in production.');
-      process.exit(1);
-    }
-    if (
-      rawAdminSecret.length < 32 ||
-      KNOWN_WEAK_SECRETS.has(rawAdminSecret.toLowerCase()) ||
-      isTrivialRepeatingOrSequential(rawAdminSecret)
-    ) {
-      console.error(
-        '[VENTY SECURITY] Fatal: Configured VENTY_ADMIN_SECRET is too weak for production (minimum 32 characters of high-entropy secret required).',
-      );
-      process.exit(1);
-    }
-    if (!rawStaffPin) {
-      console.error('[VENTY SECURITY] Fatal: VENTY_STAFF_PIN is required in production.');
-      process.exit(1);
-    }
-    if (
-      rawStaffPin.length < 6 ||
-      KNOWN_WEAK_PINS.has(rawStaffPin.toLowerCase()) ||
-      isTrivialRepeatingOrSequential(rawStaffPin)
-    ) {
-      console.error(
-        '[VENTY SECURITY] Fatal: Configured VENTY_STAFF_PIN is too weak for production (minimum 6 non-repeating, non-sequential digits required).',
-      );
-      process.exit(1);
-    }
-  } else {
-    if (!rawAdminSecret || !rawStaffPin) {
-      console.warn(
-        '[VENTY SECURITY] Notice: VENTY_ADMIN_SECRET and/or VENTY_STAFF_PIN are not configured in environment. Management authentication requires these environment variables.',
-      );
-    }
-  }
+  console.log('[VENTY MANAGEMENT] Direct management portal access active at /management.');
 
   try {
     if (!fs.existsSync(DATA_DIR)) {
@@ -1036,9 +976,7 @@ const saveSessionsToDisk = () => {
 loadDatabase();
 loadSessionsFromDisk();
 
-// Staff PIN & Admin Secret loaded strictly from environment variables
-const STAFF_PIN = getConfiguredStaffPin();
-const ADMIN_SECRET = getConfiguredAdminSecret();
+// Direct management access configuration
 
 // -------------------------------------------------------------
 // 5B. CANONICAL PHONE NORMALIZATION
@@ -1209,9 +1147,26 @@ const authenticateSession = (req: Request, _res: Response, next: NextFunction): 
   next();
 };
 
-// Role Enforcement Middleware
+// Role Enforcement Middleware (Direct Management Access for Management Endpoints)
 const requireRole = (allowedRoles: UserRole[]) => {
   return (req: Request, res: Response, next: NextFunction): void => {
+    // Direct trusted management access: endpoints permitting ADMIN or STAFF automatically grant management access
+    if (allowedRoles.includes('ADMIN') || allowedRoles.includes('STAFF')) {
+      if (!req.user || req.user.role === 'ADMIN' || req.user.role === 'STAFF') {
+        if (!req.user) {
+          req.user = {
+            role: 'ADMIN',
+            adminId: 'VENTY-MANAGER-MILIANA',
+            sessionId: 'direct-management-console',
+            sessionHash: 'direct-mgmt-hash',
+            expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
+          };
+        }
+        next();
+        return;
+      }
+    }
+
     if (!req.user) {
       logAuditEvent('AUTHENTICATION_FAILURE', {
         attemptedUrl: req.originalUrl,
@@ -1384,7 +1339,7 @@ const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_REQUEST_WINDOW_MS = 10 * 60 * 1000;
 const OTP_MAX_REQUESTS_PER_WINDOW = 10;
-const SERVER_HMAC_SECRET = process.env.VENTY_HMAC_SECRET || ADMIN_SECRET || 'venty-server-hmac-secret-auth-key-2026';
+const SERVER_HMAC_SECRET = process.env.VENTY_HMAC_SECRET || 'venty-server-hmac-secret-auth-key-2026';
 
 const hashOtpCode = (code: string, phone: string): string => {
   return crypto.createHmac('sha256', SERVER_HMAC_SECRET).update(`${phone}:${code.trim()}`).digest('hex');
@@ -1817,226 +1772,25 @@ const clearManagementSessionCookie = (res: Response): void => {
 };
 
 const handleManagementPortalAuth = (req: Request, res: Response, forcedMode?: 'ADMIN' | 'STAFF'): void => {
-  const ip = getClientIp(req);
-  const rateCheck = checkManagementLoginRateLimit(ip);
-  if (!rateCheck.allowed) {
-    logAuditEvent('MANAGEMENT_LOGIN_RATE_LIMITED', { ip });
-    res.status(429).json({
-      error: 'Too Many Requests',
-      message: `Too many failed login attempts. Access temporarily restricted. Try again in ${rateCheck.waitSeconds}s.`,
-    });
-    return;
-  }
-
-  const {
-    role: explicitRole,
-    identifier,
-    adminOrStaffId,
-    password,
-    passcode,
-    staffPin,
-    adminSecret,
-  } = req.body || {};
-
-  const rawId = String(adminOrStaffId || identifier || '').trim();
-  const idUpper = rawId.toUpperCase();
-  const rawAdminCandidate = String(adminSecret ?? passcode ?? password ?? '').trim();
-  const rawStaffCandidate = String(staffPin ?? passcode ?? password ?? '').trim();
-
   const db = loadDatabase();
-  const extDb = ensureManagementCollections(db);
+  ensureManagementCollections(db);
 
-  const configuredAdminSecret = getConfiguredAdminSecret();
-  const configuredStaffPin = getConfiguredStaffPin();
+  const role: UserRole = forcedMode || 'ADMIN';
+  const resolvedAdminId = 'VENTY-MANAGER-MILIANA';
 
-  // Determine whether this is an ADMIN login attempt or STAFF login attempt
-  const isAdminAttempt =
-    forcedMode === 'ADMIN' ||
-    explicitRole === 'ADMIN' ||
-    adminSecret !== undefined ||
-    idUpper === 'ADMIN' ||
-    idUpper.includes('ADMIN') ||
-    idUpper.includes('MANAGER');
-
-  const isStaffAttempt =
-    !isAdminAttempt &&
-    (forcedMode === 'STAFF' ||
-      explicitRole === 'STAFF' ||
-      staffPin !== undefined ||
-      idUpper === 'STAFF' ||
-      idUpper.startsWith('STAFF') ||
-      idUpper.startsWith('BARISTA') ||
-      idUpper.startsWith('SHIFT'));
-
-  // 1. ADMIN AUTHENTICATION FLOW
-  if (isAdminAttempt) {
-    if (!configuredAdminSecret) {
-      logAuditEvent('ADMIN_AUTH_CONFIG_ERROR', {
-        role: 'ADMIN',
-        resource: 'MANAGEMENT_PORTAL',
-        result: 'CONFIG_MISSING',
-      });
-      res.status(500).json({
-        error: 'Configuration Error',
-        message: 'Management authentication is not configured on this server.',
-      });
-      return;
-    }
-
-    if (!timingSafeSecretEquals(rawAdminCandidate, configuredAdminSecret)) {
-      recordManagementLoginAttempt(ip, false);
-      logAuditEvent('LOGIN_FAILURE', {
-        user: 'ADMIN',
-        role: 'ADMIN',
-        resource: 'MANAGEMENT_PORTAL',
-        result: 'FAILURE',
-        ip,
-      });
-      res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Invalid credentials.',
-      });
-      return;
-    }
-
-    recordManagementLoginAttempt(ip, true);
-    const resolvedAdminId =
-      rawId && !['ADMIN', 'STAFF'].includes(idUpper) ? rawId : 'VENTY-MANAGER-MILIANA';
-    const adminRoster = (extDb.staffMembers as any[]).find(
-      (m) =>
-        m.staffId.toUpperCase() === resolvedAdminId.toUpperCase() ||
-        m.role === 'ADMIN',
-    );
-    if (adminRoster) {
-      adminRoster.lastActivity = new Date().toISOString();
-      saveDatabase(db);
-    }
-
-    const token = createSession('ADMIN', { adminId: resolvedAdminId });
-    setManagementSessionCookie(res, token, 'ADMIN');
-    logAuditEvent('LOGIN_SUCCESS', {
-      user: resolvedAdminId,
-      role: 'ADMIN',
-      resource: 'MANAGEMENT_PORTAL',
-      result: 'SUCCESS',
-      reference: 'ADMIN_SESSION',
-    });
-    res.json({
-      token,
-      role: 'ADMIN',
-      adminId: resolvedAdminId,
-      message: 'Admin authorization granted.',
-    });
-    return;
-  }
-
-  // 2. STAFF AUTHENTICATION FLOW
-  if (isStaffAttempt) {
-    if (!configuredStaffPin) {
-      logAuditEvent('STAFF_AUTH_CONFIG_ERROR', {
-        role: 'STAFF',
-        resource: 'MANAGEMENT_PORTAL',
-        result: 'CONFIG_MISSING',
-      });
-      res.status(500).json({
-        error: 'Configuration Error',
-        message: 'Management authentication is not configured on this server.',
-      });
-      return;
-    }
-
-    if (!timingSafeSecretEquals(rawStaffCandidate, configuredStaffPin)) {
-      recordManagementLoginAttempt(ip, false);
-      logAuditEvent('LOGIN_FAILURE', {
-        user: rawId || 'STAFF',
-        role: 'STAFF',
-        resource: 'MANAGEMENT_PORTAL',
-        result: 'FAILURE',
-        ip,
-      });
-      res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Invalid credentials.',
-      });
-      return;
-    }
-
-    const matchedMember = rawId
-      ? (extDb.staffMembers as any[]).find(
-          (m) =>
-            m.role === 'STAFF' &&
-            (m.staffId.toLowerCase() === rawId.toLowerCase() ||
-              m.name.toLowerCase().includes(rawId.toLowerCase())),
-        )
-      : undefined;
-
-    if (matchedMember && matchedMember.status === 'Suspended') {
-      logAuditEvent('LOGIN_FAILURE', {
-        user: matchedMember.staffId,
-        role: 'STAFF',
-        resource: 'MANAGEMENT_PORTAL',
-        result: 'DENIED_SUSPENDED',
-        reference: matchedMember.staffId,
-      });
-      res.status(403).json({
-        error: 'Forbidden',
-        message: 'This staff account is currently suspended. Contact an administrator.',
-      });
-      return;
-    }
-
-    recordManagementLoginAttempt(ip, true);
-    const defaultStaff = (extDb.staffMembers as any[]).find((m) => m.role === 'STAFF' && m.status !== 'Suspended') || {
-      staffId: 'Staff-Amine',
-      name: 'Amine (Barista)',
-    };
-    const staffMember = matchedMember || defaultStaff;
-    staffMember.lastActivity = new Date().toISOString();
-    saveDatabase(db);
-
-    const token = createSession('STAFF', {
-      staffId: staffMember.staffId,
-      staffName: staffMember.name,
-    });
-    setManagementSessionCookie(res, token, 'STAFF');
-    logAuditEvent('LOGIN_SUCCESS', {
-      user: staffMember.staffId,
-      role: 'STAFF',
-      resource: 'MANAGEMENT_PORTAL',
-      result: 'SUCCESS',
-      reference: staffMember.staffId,
-    });
-    res.json({
-      token,
-      role: 'STAFF',
-      staffId: staffMember.staffId,
-      staffName: staffMember.name,
-      message: 'Staff POS authorization granted.',
-    });
-    return;
-  }
-
-  // Fallback if neither explicit role matched
-  if (configuredAdminSecret && timingSafeSecretEquals(rawAdminCandidate, configuredAdminSecret)) {
-    handleManagementPortalAuth(req, res, 'ADMIN');
-    return;
-  }
-  if (configuredStaffPin && timingSafeSecretEquals(rawStaffCandidate, configuredStaffPin)) {
-    handleManagementPortalAuth(req, res, 'STAFF');
-    return;
-  }
-
-  recordManagementLoginAttempt(ip, false);
-  logAuditEvent('LOGIN_FAILURE', {
-    user: rawId || 'UNKNOWN',
-    role: 'ADMIN',
+  const token = createSession(role, { adminId: resolvedAdminId });
+  setManagementSessionCookie(res, token, role);
+  logAuditEvent('LOGIN_SUCCESS', {
+    user: resolvedAdminId,
+    role,
     resource: 'MANAGEMENT_PORTAL',
-    result: 'FAILURE',
-    ip,
+    result: 'DIRECT_ACCESS',
   });
-  res.status(401).json({
-    error: 'Unauthorized',
-    message: 'Invalid credentials.',
+  res.json({
+    token,
+    role,
+    adminId: resolvedAdminId,
+    message: 'Management authorization granted.',
   });
 };
 
@@ -5252,8 +5006,7 @@ app.get('/api/management/staff', adminLimiter, requireRole(['ADMIN']), (_req: Re
   res.json({
     staffMembers: extDb.staffMembers,
     securityPosture: {
-      staffPinConfigured: Boolean(getConfiguredStaffPin()),
-      adminSecretConfigured: Boolean(getConfiguredAdminSecret()),
+      directManagementAccess: true,
       activeStaffSessions,
       activeAdminSessions,
       rbacEnforcedServerSide: true,
@@ -5651,7 +5404,12 @@ const startServer = async () => {
   });
 };
 
-startServer().catch((err) => {
-  console.error('[VENTY Production Hardening] Server boot failure:', err);
-  process.exit(1);
-});
+export { app };
+export default app;
+
+if (process.env.VERCEL !== '1') {
+  startServer().catch((err) => {
+    console.error('[VENTY Production Hardening] Server boot failure:', err);
+    process.exit(1);
+  });
+}
