@@ -149,4 +149,27 @@ body {
   }
 }
 
+/* Mobile Performance & Touch Optimizations */
+button, a, input, select, textarea {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* GPU rendering acceleration for smooth animations */
+.transform-gpu {
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+}
+
+/* Below-the-fold content visibility optimization for mobile DOM */
+@media (min-width: 0px) {
+  #about,
+  #our-coffee,
+  #events,
+  #find-us {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 600px;
+  }
+}
+
 

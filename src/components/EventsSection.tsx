@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 
 interface EventsSectionProps {
   onOpenEnquiry: () => void;
@@ -12,9 +12,9 @@ export const EventsSection: React.FC<EventsSectionProps> = ({ onOpenEnquiry }) =
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
+          viewport={{ once: true, margin: '-40px' }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-          className="bg-[#eee9de] p-10 sm:p-14 md:p-16 text-center border border-[#ded7c8]/60 shadow-[0_2px_12px_rgba(43,29,22,0.03)]"
+          className="bg-[#eee9de] p-10 sm:p-14 md:p-16 text-center border border-[#ded7c8]/60 shadow-[0_2px_12px_rgba(43,29,22,0.03)] transform-gpu will-change-transform"
         >
           {/* Label */}
           <p className="font-sans font-medium uppercase text-[10px] tracking-[0.16em] text-[#8a7b70] mb-3">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { Coffee, Droplets, Sparkles, Clock } from 'lucide-react';
 
 export const BrewMethodsStrip: React.FC = () => {

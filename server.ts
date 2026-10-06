@@ -5,8 +5,25 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
+import {
+  isPostgresConfigured,
+  runMigrations,
+  migrateJsonToPostgres,
+  pgRepository,
+} from './src/db/index';
 
 dotenv.config();
+
+process.on('uncaughtException', (err: Error) => {
+  console.error('[VENTY CRITICAL] Uncaught exception:', err?.message || err);
+  if (err?.stack) {
+    console.error(err.stack);
+  }
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[VENTY WARNING] Unhandled promise rejection:', reason?.message || reason);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,9 +31,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_SERVERLESS = process.env.VERCEL === '1' || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+const BUNDLED_DATA_DIR = path.resolve(__dirname, 'data_store');
 const DATA_DIR = process.env.DATA_STORE_DIR
   ? path.resolve(process.env.DATA_STORE_DIR)
-  : path.resolve(__dirname, 'data_store');
+  : (IS_SERVERLESS ? path.resolve('/tmp', 'data_store') : BUNDLED_DATA_DIR);
 const DB_FILE = path.resolve(DATA_DIR, 'venty_loyalty_db.json');
 const DB_BACKUP_FILE = path.resolve(DATA_DIR, 'venty_loyalty_db.bak.json');
 const SESSIONS_FILE = path.resolve(DATA_DIR, 'venty_sessions.json');
@@ -117,6 +136,20 @@ const validateStartupSecretsAndStorage = () => {
     if (!fs.existsSync(BACKUPS_DIR)) {
       fs.mkdirSync(BACKUPS_DIR, { recursive: true });
     }
+
+    // In serverless environments, if local writable DB doesn't exist yet, seed from bundled copy
+    if (IS_SERVERLESS && !fs.existsSync(DB_FILE)) {
+      const bundledDbFile = path.resolve(BUNDLED_DATA_DIR, 'venty_loyalty_db.json');
+      if (fs.existsSync(bundledDbFile)) {
+        try {
+          fs.copyFileSync(bundledDbFile, DB_FILE);
+          console.log('[VENTY Serverless] Seeded loyalty DB from bundled data_store snapshot.');
+        } catch (copyErr) {
+          console.warn('[VENTY Serverless] Failed to seed DB from bundle:', copyErr);
+        }
+      }
+    }
+
     const probeFile = path.resolve(DATA_DIR, `.write_probe_${process.pid}`);
     fs.writeFileSync(probeFile, 'ok', 'utf-8');
     fs.unlinkSync(probeFile);
@@ -124,7 +157,9 @@ const validateStartupSecretsAndStorage = () => {
     console.error(
       `[VENTY FATAL STARTUP ERROR] DATA_STORE_DIR (${DATA_DIR}) is not writable: ${err?.message || 'Permission denied'}.`,
     );
-    process.exit(1);
+    if (!IS_SERVERLESS) {
+      process.exit(1);
+    }
   }
 };
 
@@ -799,9 +834,10 @@ const INITIAL_SERVER_DB: ServerLoyaltyDB = {
   migratedClients: {},
 };
 
-// Database in-memory cache & synchronous atomic write mutex
-let dbCache: ServerLoyaltyDB = { ...INITIAL_SERVER_DB };
-let isWriting = false;
+// Database in-memory authoritative cache & serialized atomic write engine
+let dbCache: ServerLoyaltyDB | null = null;
+let isDbWriting = false;
+let isDbWritePending = false;
 
 // Snapshot archive creator
 export const createSnapshotArchive = (db: ServerLoyaltyDB) => {
@@ -824,16 +860,47 @@ export const createSnapshotArchive = (db: ServerLoyaltyDB) => {
   }
 };
 
+const flushDatabaseToDisk = (): void => {
+  if (!dbCache) return;
+  if (isDbWriting) {
+    isDbWritePending = true;
+    return;
+  }
+  isDbWriting = true;
+  isDbWritePending = false;
+  try {
+    const serialized = JSON.stringify(dbCache, null, 2);
+    const tmpFile = `${DB_FILE}.tmp.${Date.now()}_${process.pid}`;
+    fs.writeFileSync(tmpFile, serialized, 'utf-8');
+    fs.renameSync(tmpFile, DB_FILE);
+
+    // Keep active backup snapshot
+    fs.writeFileSync(DB_BACKUP_FILE, serialized, 'utf-8');
+  } catch (err) {
+    console.error('[Server DB] Atomic DB write error:', err);
+  } finally {
+    isDbWriting = false;
+    if (isDbWritePending) {
+      setImmediate(() => flushDatabaseToDisk());
+    }
+  }
+};
+
 const loadDatabase = (): ServerLoyaltyDB => {
+  if (dbCache) {
+    return dbCache;
+  }
   try {
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, 'utf-8');
       dbCache = JSON.parse(data);
+      if (!dbCache || typeof dbCache !== 'object') {
+        dbCache = { ...INITIAL_SERVER_DB };
+      }
       dbCache.accounts = Array.isArray(dbCache.accounts) ? dbCache.accounts.filter(Boolean) : [...INITIAL_SERVER_DB.accounts];
       dbCache.transactions = Array.isArray(dbCache.transactions) ? dbCache.transactions.filter(Boolean) : [...INITIAL_SERVER_DB.transactions];
       if (!Array.isArray(dbCache.orders)) {
         dbCache.orders = [...INITIAL_SERVER_DB.orders];
-        saveDatabase(dbCache);
       } else {
         dbCache.orders = dbCache.orders.filter(Boolean);
       }
@@ -844,48 +911,58 @@ const loadDatabase = (): ServerLoyaltyDB => {
     try {
       if (fs.existsSync(DB_BACKUP_FILE)) {
         const backupData = fs.readFileSync(DB_BACKUP_FILE, 'utf-8');
-        dbCache = JSON.parse(backupData);
-        if (!Array.isArray(dbCache.orders)) {
-          dbCache.orders = [...INITIAL_SERVER_DB.orders];
+        const parsed = JSON.parse(backupData);
+        if (parsed && typeof parsed === 'object') {
+          dbCache = parsed as ServerLoyaltyDB;
+          if (!Array.isArray(dbCache.orders)) {
+            dbCache.orders = [...INITIAL_SERVER_DB.orders];
+          }
+          flushDatabaseToDisk();
+          logAuditEvent('DATABASE_RESTORED_FROM_BACKUP', { source: 'venty_loyalty_db.bak.json' });
+          return dbCache;
         }
-        saveDatabase(dbCache);
-        logAuditEvent('DATABASE_RESTORED_FROM_BACKUP', { source: 'venty_loyalty_db.bak.json' });
-        return dbCache;
       }
     } catch (bErr) {
       console.error('[Server DB] Backup restore failed:', bErr);
     }
   }
-  saveDatabase(INITIAL_SERVER_DB);
+  dbCache = JSON.parse(JSON.stringify(INITIAL_SERVER_DB)) as ServerLoyaltyDB;
+  flushDatabaseToDisk();
   return dbCache;
 };
 
-// Atomic file write mechanism using temporary swap file
+// Atomic memory update & non-blocking serialized disk persistence
 const saveDatabase = (db: ServerLoyaltyDB): void => {
-  if (isWriting) {
-    dbCache = db;
-    return;
-  }
-  isWriting = true;
-  try {
-    dbCache = db;
-    const serialized = JSON.stringify(db, null, 2);
-    const tmpFile = `${DB_FILE}.tmp.${Date.now()}`;
-    fs.writeFileSync(tmpFile, serialized, 'utf-8');
-    fs.renameSync(tmpFile, DB_FILE);
-
-    // Keep active backup snapshot
-    fs.writeFileSync(DB_BACKUP_FILE, serialized, 'utf-8');
-  } catch (err) {
-    console.error('[Server DB] Atomic DB write error:', err);
-  } finally {
-    isWriting = false;
-  }
+  dbCache = db;
+  flushDatabaseToDisk();
 };
 
 // Boot database & archive snapshot
-loadDatabase();
-createSnapshotArchive(dbCache);
+const initialDb = loadDatabase();
+createSnapshotArchive(initialDb);
+
+// Postgres Serverless Boot Initialization
+const initPostgresPersistence = async () => {
+  if (isPostgresConfigured()) {
+    try {
+      console.log('[Postgres] DATABASE_URL detected. Running schema migrations...');
+      await runMigrations();
+      const existing = await pgRepository.getOrders({ limit: 1 });
+      if (existing.length === 0) {
+        console.log('[Postgres] First boot detected. Migrating initial data from JSON...');
+        const summary = await migrateJsonToPostgres();
+        console.log(`[Postgres] Initialized ${summary.customersCount} customers, ${summary.ordersCount} orders in ${summary.durationMs}ms.`);
+      } else {
+        console.log('[Postgres] Connected to durable Neon PostgreSQL database (schema up to date).');
+      }
+    } catch (err: any) {
+      console.error('[Postgres Init Warning]', err?.message || err);
+    }
+  } else {
+    console.log('[VENTY DB] Running in file/memory mode. Configure DATABASE_URL to enable Neon Serverless Postgres.');
+  }
+};
+initPostgresPersistence().catch((err) => console.error('[Postgres Boot Error]', err));
 
 // -------------------------------------------------------------
 // 5. PERSISTENT SERVER SESSION MANAGEMENT (HASHED STORAGE)
@@ -1105,8 +1182,8 @@ const parseCookies = (cookieHeader?: string): Record<string, string> => {
   return out;
 };
 
-// Session Authentication Middleware (Role derived strictly from server-side sessionStore via SHA-256 hash)
-const authenticateSession = (req: Request, _res: Response, next: NextFunction): void => {
+// Session Authentication Middleware (Role derived strictly from server-side sessionStore via SHA-256 hash or Postgres)
+const authenticateSession = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
   const authHeader = req.headers['authorization'] || (req.headers['x-venty-session-token'] as string);
   let rawToken: string | undefined;
   let authTransport: 'bearer' | 'custom-header' | 'cookie' = 'bearer';
@@ -1124,8 +1201,28 @@ const authenticateSession = (req: Request, _res: Response, next: NextFunction): 
 
   if (rawToken && (rawToken.startsWith('vty_sess_') || rawToken.length >= 32)) {
     const sessionHash = hashSessionToken(rawToken);
-    if (sessionStore.has(sessionHash)) {
-      const session = sessionStore.get(sessionHash)!;
+    let session = sessionStore.get(sessionHash);
+
+    // If not in local instance memory and Postgres is configured, query durable shared session store
+    if (!session && isPostgresConfigured()) {
+      try {
+        const pgSess = await pgRepository.getCustomerSession(sessionHash);
+        if (pgSess) {
+          session = {
+            role: 'CUSTOMER',
+            customerId: pgSess.customerId,
+            sessionId: pgSess.sessionId,
+            sessionHash: pgSess.sessionHash,
+            expiresAt: pgSess.expiresAt,
+          };
+          sessionStore.set(sessionHash, session);
+        }
+      } catch (sessErr) {
+        console.error('[Postgres Session Lookup Error]', sessErr);
+      }
+    }
+
+    if (session) {
       if (Date.now() <= session.expiresAt) {
         req.user = session;
         req.authTransport = authTransport;
@@ -1133,6 +1230,9 @@ const authenticateSession = (req: Request, _res: Response, next: NextFunction): 
         return;
       } else {
         sessionStore.delete(sessionHash);
+        if (isPostgresConfigured()) {
+          pgRepository.deleteCustomerSession(sessionHash).catch(() => {});
+        }
         saveSessionsToDisk();
         req.authError = 'Session token has expired.';
       }
@@ -1410,6 +1510,9 @@ const handleCustomerRequestOtp = async (req: Request, res: Response): Promise<vo
   };
 
   customerOtpMap.set(normalizedPhone, challenge);
+  if (isPostgresConfigured()) {
+    pgRepository.saveOtpChallenge(challenge).catch((e) => console.error('[Postgres OTP Save]', e));
+  }
 
   logAuditEvent('CUSTOMER_OTP_REQUESTED', {
     phoneMasked: maskPhoneForAudit(normalizedPhone),
@@ -1441,12 +1544,26 @@ const handleCustomerVerifyOtp = async (req: Request, res: Response): Promise<voi
   }
 
   const ip = getClientIp(req);
-  const challenge = customerOtpMap.get(normalizedPhone);
+  let challenge = customerOtpMap.get(normalizedPhone);
+  if (!challenge && isPostgresConfigured()) {
+    try {
+      const pgCh = await pgRepository.getOtpChallenge(normalizedPhone);
+      if (pgCh) {
+        challenge = pgCh as any;
+        customerOtpMap.set(normalizedPhone, challenge as any);
+      }
+    } catch (e) {
+      console.error('[Postgres OTP Challenge Lookup Error]', e);
+    }
+  }
   const now = Date.now();
 
   if (!challenge || now > challenge.expiresAt) {
     if (challenge) {
       customerOtpMap.delete(normalizedPhone);
+      if (isPostgresConfigured()) {
+        pgRepository.deleteOtpChallenge(normalizedPhone).catch(() => {});
+      }
     }
     logAuditEvent('CUSTOMER_OTP_EXPIRED_OR_NOT_FOUND', {
       phoneMasked: maskPhoneForAudit(normalizedPhone),
@@ -1491,6 +1608,9 @@ const handleCustomerVerifyOtp = async (req: Request, res: Response): Promise<voi
 
   // Single-use code guarantee: immediately remove from map
   customerOtpMap.delete(normalizedPhone);
+  if (isPostgresConfigured()) {
+    pgRepository.deleteOtpChallenge(normalizedPhone).catch(() => {});
+  }
 
   const cleanName = typeof name === 'string' && name.trim() ? name.trim().substring(0, 80) : challenge.name;
   const cleanEmail = typeof email === 'string' && email.trim() ? email.trim().substring(0, 100) : challenge.email;
@@ -1741,6 +1861,57 @@ const recordManagementLoginAttempt = (ip: string, succeeded: boolean): void => {
   }
   managementLoginTrackerMap.set(ip, record);
 };
+
+// Periodic Memory Sweep (Prevents unbounded memory growth in long-running production environments)
+const MEMORY_SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const cleanupExpiredMemoryRecords = () => {
+  const now = Date.now();
+  // 1. Sessions
+  for (const [key, sess] of sessionStore.entries()) {
+    if (sess.expiresAt <= now) {
+      sessionStore.delete(key);
+    }
+  }
+  // 2. Customer OTP Challenges
+  for (const [phone, challenge] of customerOtpMap.entries()) {
+    if (challenge.expiresAt <= now) {
+      customerOtpMap.delete(phone);
+    }
+  }
+  // 3. OTP Request Rate Limits
+  for (const [key, record] of customerOtpRequestLimiterMap.entries()) {
+    if (record.resetAt <= now) {
+      customerOtpRequestLimiterMap.delete(key);
+    }
+  }
+  // 4. Login Attempt Trackers
+  for (const [phone, tracker] of loginPhoneTrackerMap.entries()) {
+    if (tracker.windowResetAt <= now && (!tracker.blockedUntil || tracker.blockedUntil <= now)) {
+      loginPhoneTrackerMap.delete(phone);
+    }
+  }
+  for (const [ip, tracker] of loginIpTrackerMap.entries()) {
+    if (tracker.windowResetAt <= now && (!tracker.blockedUntil || tracker.blockedUntil <= now)) {
+      loginIpTrackerMap.delete(ip);
+    }
+  }
+  // 5. Management Login Trackers
+  for (const [ip, tracker] of managementLoginTrackerMap.entries()) {
+    if (tracker.resetAt <= now && (!tracker.blockedUntil || tracker.blockedUntil <= now)) {
+      managementLoginTrackerMap.delete(ip);
+    }
+  }
+  // 6. Global Rate Limiter Records
+  for (const [ip, record] of rateLimitStore.entries()) {
+    if (record.resetTime <= now && (!record.blockedUntil || record.blockedUntil <= now)) {
+      rateLimitStore.delete(ip);
+    }
+  }
+};
+const memorySweepTimer = setInterval(cleanupExpiredMemoryRecords, MEMORY_SWEEP_INTERVAL_MS);
+if (memorySweepTimer.unref) {
+  memorySweepTimer.unref();
+}
 
 const setManagementSessionCookie = (res: Response, token: string, role: UserRole = 'ADMIN'): void => {
   const maxAge = role === 'ADMIN' ? 8 * 3600 : role === 'STAFF' ? 12 * 3600 : 30 * 24 * 3600;
@@ -5383,12 +5554,25 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // -------------------------------------------------------------
 const startServer = async () => {
   if (process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'))) {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.use(
+      express.static(path.resolve(__dirname, 'dist'), {
+        maxAge: '1d',
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          } else if (filePath.includes('/assets/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      }),
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
-    const { createServer: createViteServer } = await import('vite');
+    const vitePkg = 'vite';
+    const { createServer: createViteServer } = await import(/* @vite-ignore */ vitePkg);
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

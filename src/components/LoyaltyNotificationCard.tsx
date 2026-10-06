@@ -484,6 +484,7 @@ export const LoyaltyNotificationCard: React.FC<LoyaltyNotificationCardProps> = (
     }
 
     const intervalId = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       setTipIndex((prev) => (prev + 1) % brewingTips.length);
     }, TIP_ROTATION_INTERVAL_MS);
 

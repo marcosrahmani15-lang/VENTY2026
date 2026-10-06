@@ -321,6 +321,9 @@ export const ManagementPortal: React.FC<ManagementPortalProps> = ({
     }
 
     const intervalId = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
       loadSectionData(activeSection, 'ADMIN', true);
     }, 5000);
 

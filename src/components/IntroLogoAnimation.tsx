@@ -580,9 +580,12 @@ const FramerAtmosphere: React.FC<{
           times: [0, 0.3, 0.6, 0.85, 1],
           ease: floatingDrift,
         }}
-        className="absolute inset-0 w-full h-full pointer-events-none"
+        className="absolute inset-0 w-full h-full pointer-events-none transform-gpu"
       >
-        {STUDIO_PARTICLES.map((p) => {
+        {(typeof window !== 'undefined' && window.innerWidth < 768
+          ? STUDIO_PARTICLES.slice(0, 10)
+          : STUDIO_PARTICLES
+        ).map((p) => {
           return (
             <motion.div
               key={p.id}
@@ -614,7 +617,7 @@ const FramerAtmosphere: React.FC<{
                 filter: p.blur > 0 ? `blur(${p.blur}px)` : 'none',
                 willChange: 'transform, opacity',
               }}
-              className="absolute rounded-full pointer-events-none"
+              className="absolute rounded-full pointer-events-none transform-gpu"
             />
           );
         })}

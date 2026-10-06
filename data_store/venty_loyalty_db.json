@@ -458,9 +458,38 @@
       "loyaltyStatus": "Active",
       "availableRewards": [],
       "redeemedRewards": []
+    },
+    {
+      "customerId": "VENTY-9205",
+      "name": "Marcos Rahmani",
+      "phone": "0562526252",
+      "email": "marcosrahmani15@gmail.com",
+      "favouriteDrink": "Iced Specialty Latte",
+      "currentStampCount": 2,
+      "lifetimeStamps": 2,
+      "welcomeBonusGranted": true,
+      "createdAt": "2026-10-06T21:08:52.364Z",
+      "updatedAt": "2026-10-06T21:08:52.364Z",
+      "loyaltyStatus": "Active",
+      "availableRewards": [],
+      "redeemedRewards": []
     }
   ],
   "transactions": [
+    {
+      "id": "LTX-MUX68DFW",
+      "customerId": "VENTY-9205",
+      "customerName": "Marcos Rahmani",
+      "type": "WELCOME_BONUS",
+      "stampsDelta": 2,
+      "timestamp": "2026-10-06T21:08:52.364Z",
+      "source": "SIGNUP_BONUS",
+      "status": "CONFIRMED",
+      "idempotencyKey": "signup_bonus_VENTY-9205_0562526252",
+      "note": "Welcome Bonus: +2 Free Stamps on Account Signup",
+      "previousValue": 0,
+      "newValue": 2
+    },
     {
       "id": "LTX-MUKKTM7K",
       "customerId": "VENTY-4240",
@@ -1466,6 +1495,557 @@
   "migratedClients": {},
   "orders": [
     {
+      "orderId": "VENTY-MUX7L3EM-4368DF16",
+      "id": "VENTY-MUX7L3EM-4368DF16",
+      "customerId": null,
+      "customerName": "Postgres Ready Test",
+      "customerPhone": "0550123456",
+      "orderItems": [
+        {
+          "id": "coffee-americano",
+          "productId": "coffee-americano",
+          "name": "Americano",
+          "price": 150,
+          "unitPrice": 150,
+          "quantity": 1,
+          "lineTotal": 150,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-americano",
+          "productId": "coffee-americano",
+          "name": "Americano",
+          "price": 150,
+          "unitPrice": 150,
+          "quantity": 1,
+          "lineTotal": 150,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 150,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:46:45.502Z",
+      "completedAt": "2026-10-06T21:46:57.506Z",
+      "updatedAt": "2026-10-06T21:46:57.506Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "test-idem-pg-verify-1",
+      "payloadFingerprint": "2dc87f27fa63d77efa79915bfdee028ad9b2e418c3341c438418758cfe8514d9"
+    },
+    {
+      "orderId": "VENTY-MUX6IAC2-BDA0C25C",
+      "id": "VENTY-MUX6IAC2-BDA0C25C",
+      "customerId": null,
+      "customerName": "Round 5 Guest",
+      "customerPhone": "0555123456",
+      "orderItems": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 300,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:16:34.898Z",
+      "completedAt": "2026-10-06T21:16:35.266Z",
+      "updatedAt": "2026-10-06T21:16:35.266Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "payloadFingerprint": "f5528d9b5843ae5856d7060869bd401c2102d545c02883dd796eda359177526e"
+    },
+    {
+      "orderId": "VENTY-MUX6IA1C-CBBBB13F",
+      "id": "VENTY-MUX6IA1C-CBBBB13F",
+      "customerId": null,
+      "customerName": "Round 4 Guest",
+      "customerPhone": "0555123456",
+      "orderItems": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 300,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:16:34.512Z",
+      "completedAt": "2026-10-06T21:16:34.881Z",
+      "updatedAt": "2026-10-06T21:16:34.881Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "payloadFingerprint": "f5528d9b5843ae5856d7060869bd401c2102d545c02883dd796eda359177526e"
+    },
+    {
+      "orderId": "VENTY-MUX6I9RA-2C21C723",
+      "id": "VENTY-MUX6I9RA-2C21C723",
+      "customerId": null,
+      "customerName": "Round 3 Guest",
+      "customerPhone": "0555123456",
+      "orderItems": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 300,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:16:34.150Z",
+      "completedAt": "2026-10-06T21:16:34.499Z",
+      "updatedAt": "2026-10-06T21:16:34.499Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "payloadFingerprint": "f5528d9b5843ae5856d7060869bd401c2102d545c02883dd796eda359177526e"
+    },
+    {
+      "orderId": "VENTY-MUX6I9GU-8D9386DE",
+      "id": "VENTY-MUX6I9GU-8D9386DE",
+      "customerId": null,
+      "customerName": "Round 2 Guest",
+      "customerPhone": "0555123456",
+      "orderItems": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 300,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:16:33.774Z",
+      "completedAt": "2026-10-06T21:16:34.135Z",
+      "updatedAt": "2026-10-06T21:16:34.135Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "payloadFingerprint": "f5528d9b5843ae5856d7060869bd401c2102d545c02883dd796eda359177526e"
+    },
+    {
+      "orderId": "VENTY-MUX6I9AA-CFF37CDE",
+      "id": "VENTY-MUX6I9AA-CFF37CDE",
+      "customerId": null,
+      "customerName": "Round 1 Guest",
+      "customerPhone": "0555123456",
+      "orderItems": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "latte-spanish-latte",
+          "productId": "latte-spanish-latte",
+          "name": "Spanish Latte",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 300,
+      "status": "COMPLETED",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:16:33.538Z",
+      "completedAt": "2026-10-06T21:16:33.761Z",
+      "updatedAt": "2026-10-06T21:16:33.761Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "payloadFingerprint": "f5528d9b5843ae5856d7060869bd401c2102d545c02883dd796eda359177526e"
+    },
+    {
+      "orderId": "VENTY-MUX6EYK3-4336F100",
+      "id": "VENTY-MUX6EYK3-4336F100",
+      "customerId": null,
+      "customerName": "Stress User 4",
+      "customerPhone": "0550000004",
+      "orderItems": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 100,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:13:59.667Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:13:59.667Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "stress-idem-1791321238660-4",
+      "payloadFingerprint": "ce87c3b6424a10dda6bef00ad9b4066899edeb77e70ad23cd74f3393c5c40ef7"
+    },
+    {
+      "orderId": "VENTY-MUX6EYJY-9B7FCA80",
+      "id": "VENTY-MUX6EYJY-9B7FCA80",
+      "customerId": null,
+      "customerName": "Stress User 3",
+      "customerPhone": "0550000003",
+      "orderItems": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 100,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:13:59.662Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:13:59.662Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "stress-idem-1791321238660-3",
+      "payloadFingerprint": "ce87c3b6424a10dda6bef00ad9b4066899edeb77e70ad23cd74f3393c5c40ef7"
+    },
+    {
+      "orderId": "VENTY-MUX6EYJU-6E74EA5E",
+      "id": "VENTY-MUX6EYJU-6E74EA5E",
+      "customerId": null,
+      "customerName": "Stress User 2",
+      "customerPhone": "0550000002",
+      "orderItems": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 100,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:13:59.658Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:13:59.658Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "stress-idem-1791321238660-2",
+      "payloadFingerprint": "ce87c3b6424a10dda6bef00ad9b4066899edeb77e70ad23cd74f3393c5c40ef7"
+    },
+    {
+      "orderId": "VENTY-MUX6EXSL-85C9E1FB",
+      "id": "VENTY-MUX6EXSL-85C9E1FB",
+      "customerId": null,
+      "customerName": "Stress User 1",
+      "customerPhone": "0550000001",
+      "orderItems": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 100,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:13:58.677Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:13:58.677Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "stress-idem-1791321238659-1",
+      "payloadFingerprint": "ce87c3b6424a10dda6bef00ad9b4066899edeb77e70ad23cd74f3393c5c40ef7"
+    },
+    {
+      "orderId": "VENTY-MUX6EXSH-5C306FD4",
+      "id": "VENTY-MUX6EXSH-5C306FD4",
+      "customerId": null,
+      "customerName": "Stress User 0",
+      "customerPhone": "0550000000",
+      "orderItems": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "items": [
+        {
+          "id": "coffee-espresso",
+          "productId": "coffee-espresso",
+          "name": "Espresso",
+          "price": 100,
+          "unitPrice": 100,
+          "quantity": 1,
+          "lineTotal": 100,
+          "category": "coffee"
+        }
+      ],
+      "totalAmount": 100,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:13:58.673Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:13:58.673Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "stress-idem-1791321238647-0",
+      "payloadFingerprint": "ce87c3b6424a10dda6bef00ad9b4066899edeb77e70ad23cd74f3393c5c40ef7"
+    },
+    {
+      "orderId": "VENTY-MUX69Q5I-6D42980A",
+      "id": "VENTY-MUX69Q5I-6D42980A",
+      "customerId": "VENTY-9205",
+      "customerName": "Marcos Rahmani",
+      "customerPhone": "0562526252",
+      "orderItems": [
+        {
+          "id": "iced-specialty-latte",
+          "productId": "iced-specialty-latte",
+          "name": "Iced Specialty Latte",
+          "price": 500,
+          "unitPrice": 500,
+          "quantity": 1,
+          "lineTotal": 500,
+          "category": "cold"
+        },
+        {
+          "id": "latte-cappuccino",
+          "productId": "latte-cappuccino",
+          "name": "Cappuccino",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        },
+        {
+          "id": "style-croissant",
+          "productId": "style-croissant",
+          "name": "Croissant",
+          "price": 200,
+          "unitPrice": 200,
+          "quantity": 1,
+          "lineTotal": 200,
+          "category": "sweets"
+        }
+      ],
+      "items": [
+        {
+          "id": "iced-specialty-latte",
+          "productId": "iced-specialty-latte",
+          "name": "Iced Specialty Latte",
+          "price": 500,
+          "unitPrice": 500,
+          "quantity": 1,
+          "lineTotal": 500,
+          "category": "cold"
+        },
+        {
+          "id": "latte-cappuccino",
+          "productId": "latte-cappuccino",
+          "name": "Cappuccino",
+          "price": 300,
+          "unitPrice": 300,
+          "quantity": 1,
+          "lineTotal": 300,
+          "category": "coffee"
+        },
+        {
+          "id": "style-croissant",
+          "productId": "style-croissant",
+          "name": "Croissant",
+          "price": 200,
+          "unitPrice": 200,
+          "quantity": 1,
+          "lineTotal": 200,
+          "category": "sweets"
+        }
+      ],
+      "totalAmount": 1000,
+      "status": "PENDING",
+      "pickupTime": "15 mins",
+      "createdAt": "2026-10-06T21:09:55.494Z",
+      "completedAt": null,
+      "updatedAt": "2026-10-06T21:09:55.494Z",
+      "cancelledAt": null,
+      "qualifiesForLoyalty": true,
+      "loyaltyStampAwarded": false,
+      "loyaltyStampsDelta": 0,
+      "idempotencyKey": "checkout_VENTY-7749_1791320994899",
+      "payloadFingerprint": "b75b0329040f7ac94853a0405e0befb25be429c5ee3aec8ac4387b543752823d"
+    },
+    {
       "orderId": "VENTY-MUKKTM9S-79971423",
       "id": "VENTY-MUKKTM9S-79971423",
       "customerId": "VENTY-4240",
@@ -1498,12 +2078,12 @@
         }
       ],
       "totalAmount": 300,
-      "status": "PENDING",
+      "status": "CANCELLED",
       "pickupTime": "15 mins",
       "createdAt": "2026-09-28T01:36:17.920Z",
       "completedAt": null,
-      "updatedAt": "2026-09-28T01:36:17.920Z",
-      "cancelledAt": null,
+      "updatedAt": "2026-10-06T20:31:47.577Z",
+      "cancelledAt": "2026-10-06T20:31:47.577Z",
       "qualifiesForLoyalty": true,
       "loyaltyStampAwarded": false,
       "loyaltyStampsDelta": 0,

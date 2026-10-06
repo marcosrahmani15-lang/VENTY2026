@@ -275,6 +275,10 @@ class CafeSoundSynthesizer {
     }
 
     // Gentle speech LFO wandering timer (subtle waxing and waning)
+    if (this.chatterLfoTimer) {
+      window.clearInterval(this.chatterLfoTimer);
+      this.chatterLfoTimer = null;
+    }
     this.chatterLfoTimer = window.setInterval(() => {
       if (!this.ctx || !this.chatterGain) return;
       const targetChatter =

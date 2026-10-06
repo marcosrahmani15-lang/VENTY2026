@@ -134,18 +134,37 @@ const apiFetch = async <T>(
     ...((options.headers as Record<string, string>) || {}),
   };
 
-  const res = await fetch(url, {
-    credentials: 'same-origin',
-    ...options,
-    headers,
-  });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ message: res.statusText }));
-    const err: any = new Error(errorBody.message || `API error ${res.status}`);
-    err.status = res.status;
-    throw err;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
-  return res.json();
+
+  try {
+    const res = await fetch(url, {
+      credentials: 'same-origin',
+      ...options,
+      signal: controller.signal,
+      headers,
+    });
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({ message: res.statusText }));
+      const err: any = new Error(errorBody.message || `API error ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return await res.json();
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      const timeoutErr: any = new Error('Network request timed out. Please check your connection.');
+      timeoutErr.status = 408;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 };
 
 /**

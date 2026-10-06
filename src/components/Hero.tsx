@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { IMAGES } from '../data/coffeeData';
 
 interface HeroProps {
@@ -22,6 +22,8 @@ export const Hero: React.FC<HeroProps> = ({
           alt="Warm artisanal specialty coffee shop interior at Venty The Coffee in Miliana"
           className="w-full h-full object-cover object-center filter brightness-[0.96] contrast-[1.03]"
           loading="eager"
+          decoding="async"
+          fetchPriority="high"
           referrerPolicy="no-referrer"
         />
 
@@ -41,7 +43,7 @@ export const Hero: React.FC<HeroProps> = ({
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center transform-gpu will-change-transform"
         >
           {/* Subheader / location kicker */}
           <p className="font-sans font-medium uppercase text-[10px] tracking-[0.16em] text-[#7a6b61] mb-4 md:mb-5">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { IMAGES } from '../data/coffeeData';
 
 interface OurCoffeeProps {
@@ -22,9 +22,9 @@ export const OurCoffee: React.FC<OurCoffeeProps> = ({ onOpenShopBeans }) => {
             <motion.div
               initial={{ scaleX: 0 }}
               whileInView={{ scaleX: 1 }}
-              viewport={{ once: true }}
+              viewport={{ once: true, margin: '-40px' }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
-              className="w-12 h-[2px] bg-[#c9833a] origin-left mb-8"
+              className="w-12 h-[2px] bg-[#c9833a] origin-left mb-8 transform-gpu"
             />
 
             {/* Featured Quote */}
@@ -76,15 +76,16 @@ export const OurCoffee: React.FC<OurCoffeeProps> = ({ onOpenShopBeans }) => {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
+                viewport={{ once: true, margin: '-40px' }}
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                className="aspect-[4/3] w-full overflow-hidden shadow-sm bg-[#eee9de]"
+                className="aspect-[4/3] w-full overflow-hidden shadow-sm bg-[#eee9de] transform-gpu will-change-transform"
               >
                 <img
                   src={IMAGES.beansSack}
                   alt="Specialty coffee beans selected for Venty The Coffee"
                   className="w-full h-full object-cover filter brightness-[0.97] hover:scale-105 transition-transform duration-500"
                   loading="lazy"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                 />
               </motion.div>
@@ -93,15 +94,16 @@ export const OurCoffee: React.FC<OurCoffeeProps> = ({ onOpenShopBeans }) => {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
+                viewport={{ once: true, margin: '-40px' }}
                 transition={{ duration: 0.6, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                className="aspect-[4/3] w-full overflow-hidden shadow-sm bg-[#eee9de] -ml-0 lg:-ml-6"
+                className="aspect-[4/3] w-full overflow-hidden shadow-sm bg-[#eee9de] -ml-0 lg:-ml-6 transform-gpu will-change-transform"
               >
                 <img
                   src={IMAGES.v60}
                   alt="Single-origin hand pour-over coffee freshly prepared at Venty"
                   className="w-full h-full object-cover filter brightness-[0.98] hover:scale-105 transition-transform duration-500"
                   loading="lazy"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                 />
               </motion.div>

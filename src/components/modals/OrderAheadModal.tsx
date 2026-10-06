@@ -140,6 +140,7 @@ export const OrderAheadModal: React.FC<OrderAheadModalProps> = ({
 
     // Poll backend order status every 5s while confirmation screen is open
     const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       refreshOrderStatusFromBackend(targetOrderId).then((fresh) => {
         if (fresh) setConfirmedOrder(fresh);
       });

@@ -44,10 +44,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { logoSrc } = useOfficialLogo();
 
   useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
-      setScrolled(window.scrollY > 20);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const isScrolled = window.scrollY > 20;
+          setScrolled((prev) => (prev !== isScrolled ? isScrolled : prev));
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -130,7 +138,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      className={`fixed top-0 left-0 right-0 z-50 transform-gpu transition-all duration-300 ${
         scrolled
           ? 'bg-[#faf6ef]/95 backdrop-blur-md border-b border-[#ded7c8]/70 shadow-[0_4px_20px_-10px_rgba(43,29,22,0.08)]'
           : 'bg-[#faf6ef]/95 backdrop-blur-sm border-b border-transparent'

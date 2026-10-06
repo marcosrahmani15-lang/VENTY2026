@@ -17,21 +17,40 @@ import { FindUsSection } from './components/FindUsSection';
 import { Footer } from './components/Footer';
 import { OrganicDivider } from './components/OrganicDivider';
 import { FloatingCartIndicator } from './components/FloatingCartIndicator';
-
-import { OrderAheadModal } from './components/modals/OrderAheadModal';
-import { FullMenuModal } from './components/modals/FullMenuModal';
-import { ShopBeansModal } from './components/modals/ShopBeansModal';
-import { EventEnquiryModal } from './components/modals/EventEnquiryModal';
-import { DirectionsModal } from './components/modals/DirectionsModal';
-import { LoyaltyModal } from './components/modals/LoyaltyModal';
-import { OrderHistoryModal } from './components/modals/OrderHistoryModal';
-import { MenuDigitalAccessModal } from './components/modals/MenuDigitalAccessModal';
 import { IntroLogoAnimation } from './components/IntroLogoAnimation';
 import { LoyaltyNotificationCard } from './components/LoyaltyNotificationCard';
-import { ManagementPortal } from './components/ManagementPortal';
 
 import { CartItem, MenuItem } from './types/coffee';
 import { OfficialMenuItem } from './data/officialMenuData';
+
+// Code-split modals and management portal to maximize initial load performance on mobile devices
+const OrderAheadModal = React.lazy(() =>
+  import('./components/modals/OrderAheadModal').then((m) => ({ default: m.OrderAheadModal })),
+);
+const FullMenuModal = React.lazy(() =>
+  import('./components/modals/FullMenuModal').then((m) => ({ default: m.FullMenuModal })),
+);
+const ShopBeansModal = React.lazy(() =>
+  import('./components/modals/ShopBeansModal').then((m) => ({ default: m.ShopBeansModal })),
+);
+const EventEnquiryModal = React.lazy(() =>
+  import('./components/modals/EventEnquiryModal').then((m) => ({ default: m.EventEnquiryModal })),
+);
+const DirectionsModal = React.lazy(() =>
+  import('./components/modals/DirectionsModal').then((m) => ({ default: m.DirectionsModal })),
+);
+const LoyaltyModal = React.lazy(() =>
+  import('./components/modals/LoyaltyModal').then((m) => ({ default: m.LoyaltyModal })),
+);
+const OrderHistoryModal = React.lazy(() =>
+  import('./components/modals/OrderHistoryModal').then((m) => ({ default: m.OrderHistoryModal })),
+);
+const MenuDigitalAccessModal = React.lazy(() =>
+  import('./components/modals/MenuDigitalAccessModal').then((m) => ({ default: m.MenuDigitalAccessModal })),
+);
+const ManagementPortal = React.lazy(() =>
+  import('./components/ManagementPortal').then((m) => ({ default: m.ManagementPortal })),
+);
 
 export default function App() {
   const [currentPath, setCurrentPath] = useState<string>(() =>
@@ -212,12 +231,14 @@ export default function App() {
 
   if (isManagementRoute) {
     return (
-      <ManagementPortal
-        isOpen={true}
-        currentPath={currentPath}
-        onNavigatePath={navigateToPath}
-        onClose={() => navigateToPath('/')}
-      />
+      <React.Suspense fallback={<div className="min-h-screen bg-[#14090b]" />}>
+        <ManagementPortal
+          isOpen={true}
+          currentPath={currentPath}
+          onNavigatePath={navigateToPath}
+          onClose={() => navigateToPath('/')}
+        />
+      </React.Suspense>
     );
   }
 
@@ -305,81 +326,99 @@ export default function App() {
         }}
       />
 
-      {/* Interactive Modals & Drawers */}
-      <OrderAheadModal
-        isOpen={orderModalOpen}
-        onClose={() => setOrderModalOpen(false)}
-        cart={cart}
-        setCart={setCart}
-        onOpenLoyalty={openLoyaltyCardModal}
-        onOpenHistory={() => setOrderHistoryModalOpen(true)}
-      />
+      {/* Interactive Modals & Drawers with Dynamic Code-Splitting */}
+      <React.Suspense fallback={null}>
+        {orderModalOpen && (
+          <OrderAheadModal
+            isOpen={orderModalOpen}
+            onClose={() => setOrderModalOpen(false)}
+            cart={cart}
+            setCart={setCart}
+            onOpenLoyalty={openLoyaltyCardModal}
+            onOpenHistory={() => setOrderHistoryModalOpen(true)}
+          />
+        )}
 
-      <FullMenuModal
-        isOpen={menuModalOpen}
-        onClose={() => setMenuModalOpen(false)}
-        initialCategory={menuSelectedCategory}
-        onAddToCart={handleAddToCart}
-        onOpenOrder={() => {
-          setMenuModalOpen(false);
-          setOrderModalOpen(true);
-        }}
-      />
+        {menuModalOpen && (
+          <FullMenuModal
+            isOpen={menuModalOpen}
+            onClose={() => setMenuModalOpen(false)}
+            initialCategory={menuSelectedCategory}
+            onAddToCart={handleAddToCart}
+            onOpenOrder={() => {
+              setMenuModalOpen(false);
+              setOrderModalOpen(true);
+            }}
+          />
+        )}
 
-      <ShopBeansModal
-        isOpen={shopBeansModalOpen}
-        onClose={() => setShopBeansModalOpen(false)}
-        onAddToCart={handleAddToCart}
-        onOpenOrder={() => {
-          setShopBeansModalOpen(false);
-          setOrderModalOpen(true);
-        }}
-      />
+        {shopBeansModalOpen && (
+          <ShopBeansModal
+            isOpen={shopBeansModalOpen}
+            onClose={() => setShopBeansModalOpen(false)}
+            onAddToCart={handleAddToCart}
+            onOpenOrder={() => {
+              setShopBeansModalOpen(false);
+              setOrderModalOpen(true);
+            }}
+          />
+        )}
 
-      <EventEnquiryModal
-        isOpen={enquiryModalOpen}
-        onClose={() => setEnquiryModalOpen(false)}
-      />
+        {enquiryModalOpen && (
+          <EventEnquiryModal
+            isOpen={enquiryModalOpen}
+            onClose={() => setEnquiryModalOpen(false)}
+          />
+        )}
 
-      <DirectionsModal
-        isOpen={directionsModalOpen}
-        onClose={() => setDirectionsModalOpen(false)}
-      />
+        {directionsModalOpen && (
+          <DirectionsModal
+            isOpen={directionsModalOpen}
+            onClose={() => setDirectionsModalOpen(false)}
+          />
+        )}
 
-      {/* Digital Stamp Card Loyalty Modal */}
-      <LoyaltyModal
-        isOpen={loyaltyModalOpen}
-        onClose={() => {
-          setLoyaltyModalOpen(false);
-          setReturnToContextOnAuth(false);
-        }}
-        onOpenOrderAhead={() => setOrderModalOpen(true)}
-        initialTab={loyaltyInitialTab}
-        initialAuthMode={loyaltyInitialAuthMode}
-        onAuthSuccess={() => {
-          if (returnToContextOnAuth) {
-            setLoyaltyModalOpen(false);
-            setReturnToContextOnAuth(false);
-          }
-        }}
-      />
+        {/* Digital Stamp Card Loyalty Modal */}
+        {loyaltyModalOpen && (
+          <LoyaltyModal
+            isOpen={loyaltyModalOpen}
+            onClose={() => {
+              setLoyaltyModalOpen(false);
+              setReturnToContextOnAuth(false);
+            }}
+            onOpenOrderAhead={() => setOrderModalOpen(true)}
+            initialTab={loyaltyInitialTab}
+            initialAuthMode={loyaltyInitialAuthMode}
+            onAuthSuccess={() => {
+              if (returnToContextOnAuth) {
+                setLoyaltyModalOpen(false);
+                setReturnToContextOnAuth(false);
+              }
+            }}
+          />
+        )}
 
-      {/* Order History & Live Tracking Modal */}
-      <OrderHistoryModal
-        isOpen={orderHistoryModalOpen}
-        onClose={() => setOrderHistoryModalOpen(false)}
-        onReorder={handleReorder}
-        onQuickReorderItem={handleQuickReorderItem}
-        onOpenNewOrder={() => setOrderModalOpen(true)}
-        onOpenLoyalty={openLoyaltyCardModal}
-        cart={cart}
-      />
+        {/* Order History & Live Tracking Modal */}
+        {orderHistoryModalOpen && (
+          <OrderHistoryModal
+            isOpen={orderHistoryModalOpen}
+            onClose={() => setOrderHistoryModalOpen(false)}
+            onReorder={handleReorder}
+            onQuickReorderItem={handleQuickReorderItem}
+            onOpenNewOrder={() => setOrderModalOpen(true)}
+            onOpenLoyalty={openLoyaltyCardModal}
+            cart={cart}
+          />
+        )}
 
-      {/* In-Shop Table / Counter Digital Menu QR Access Modal */}
-      <MenuDigitalAccessModal
-        isOpen={scanMenuModalOpen}
-        onClose={() => setScanMenuModalOpen(false)}
-      />
+        {/* In-Shop Table / Counter Digital Menu QR Access Modal */}
+        {scanMenuModalOpen && (
+          <MenuDigitalAccessModal
+            isOpen={scanMenuModalOpen}
+            onClose={() => setScanMenuModalOpen(false)}
+          />
+        )}
+      </React.Suspense>
 
       {/* Opening Intro Logo Animation */}
       <IntroLogoAnimation />

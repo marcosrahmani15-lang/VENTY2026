@@ -142,6 +142,7 @@ export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({
 
     // Poll backend order history every 6s while modal is open for live status updates
     const interval = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const active = getActiveCustomer();
       if (active) {
         syncCustomerOrdersFromBackend().then((synced) => {

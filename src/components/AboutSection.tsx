@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { IMAGES } from '../data/coffeeData';
 
 export const AboutSection: React.FC = () => {
@@ -46,15 +46,16 @@ export const AboutSection: React.FC = () => {
             <motion.div
               initial={{ opacity: 0, scale: 0.98 }}
               whileInView={{ opacity: 1, scale: 1 }}
-              viewport={{ once: true }}
+              viewport={{ once: true, margin: '-40px' }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="relative aspect-[4/5] w-full overflow-hidden shadow-sm bg-[#eee9de]"
+              className="relative aspect-[4/5] w-full overflow-hidden shadow-sm bg-[#eee9de] transform-gpu will-change-transform"
             >
               <img
                 src={IMAGES.barista}
                 alt="Barista preparing specialty coffee at Venty The Coffee in Miliana"
                 className="w-full h-full object-cover filter brightness-[0.98] contrast-[1.02]"
                 loading="lazy"
+                decoding="async"
                 referrerPolicy="no-referrer"
               />
             </motion.div>
