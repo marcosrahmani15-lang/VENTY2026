@@ -773,4 +773,190 @@ export const pgRepository = {
       console.error('[Audit Log] Failed to insert audit log in Postgres:', err);
     }
   },
+
+  // --------------------------------------------------------------------------
+  // 6. Management Queries & Administrative Modifications
+  // --------------------------------------------------------------------------
+  async getAllCustomers(options: { search?: string; status?: string; limit?: number; offset?: number } = {}): Promise<any[]> {
+    const where: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (options.status && options.status !== 'ALL') {
+      where.push(`c.status = $${idx++}`);
+      values.push(options.status);
+    }
+    if (options.search) {
+      where.push(`(c.name ILIKE $${idx} OR c.phone ILIKE $${idx} OR c.id ILIKE $${idx})`);
+      values.push(`%${options.search}%`);
+      idx++;
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(options.limit || 100, 1), 500);
+    const offset = Math.max(options.offset || 0, 0);
+
+    const res = await query(
+      `SELECT c.id, c.name, c.phone, c.email, c.favourite_drink, c.status, c.created_at, c.updated_at,
+              COALESCE(l.current_stamp_count, 0) as current_stamp_count,
+              COALESCE(l.lifetime_stamps, 0) as lifetime_stamps,
+              COALESCE(l.welcome_bonus_granted, false) as welcome_bonus_granted,
+              (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) as orders_count,
+              (SELECT COALESCE(SUM(total_amount), 0) FROM orders o WHERE o.customer_id = c.id) as total_spent
+       FROM customers c
+       LEFT JOIN loyalty_accounts l ON c.id = l.customer_id
+       ${whereClause}
+       ORDER BY c.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      values,
+    );
+
+    return res.rows.map((r) => ({
+      id: r.id,
+      customerId: r.id,
+      name: r.name,
+      phone: r.phone,
+      email: r.email,
+      favouriteDrink: r.favourite_drink,
+      status: r.status,
+      currentStampCount: Number(r.current_stamp_count),
+      lifetimeStamps: Number(r.lifetime_stamps),
+      welcomeBonusGranted: Boolean(r.welcome_bonus_granted),
+      ordersCount: Number(r.orders_count || 0),
+      totalSpent: Number(r.total_spent || 0),
+      createdAt: new Date(r.created_at).toISOString(),
+      updatedAt: new Date(r.updated_at).toISOString(),
+    }));
+  },
+
+  async updateCustomerStatus(customerId: string, status: string): Promise<boolean> {
+    const res = await query(`UPDATE customers SET status = $1, updated_at = NOW() WHERE id = $2`, [status, customerId]);
+    return (res.rowCount || 0) > 0;
+  },
+
+  async adjustCustomerStamps(
+    customerId: string,
+    delta: number,
+    note: string,
+    actorId: string = 'ADMIN',
+  ): Promise<{ success: boolean; customer: CustomerRecord | null; txId: string }> {
+    return await transaction(async (client) => {
+      const custRes = await client.query(
+        `SELECT c.id, c.name, l.current_stamp_count, l.lifetime_stamps
+         FROM customers c
+         JOIN loyalty_accounts l ON c.id = l.customer_id
+         WHERE c.id = $1 FOR UPDATE`,
+        [customerId],
+      );
+      if (custRes.rows.length === 0) {
+        throw new Error(`Customer #${customerId} not found.`);
+      }
+      const cust = custRes.rows[0];
+      const prevStamps = Number(cust.current_stamp_count);
+      const nextStamps = Math.max(0, prevStamps + delta);
+      const prevLifetime = Number(cust.lifetime_stamps);
+      const nextLifetime = delta > 0 ? prevLifetime + delta : prevLifetime;
+
+      await client.query(
+        `UPDATE loyalty_accounts
+         SET current_stamp_count = $1, lifetime_stamps = $2, updated_at = NOW()
+         WHERE customer_id = $3`,
+        [nextStamps, nextLifetime, customerId],
+      );
+
+      const txId = `LTX-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      await client.query(
+        `INSERT INTO loyalty_transactions (
+           id, customer_id, customer_name, type, stamps_delta, source, status,
+           note, previous_value, new_value, created_at
+         ) VALUES ($1, $2, $3, $4, $5, 'ADMIN_MANUAL_ADJUSTMENT', 'CONFIRMED', $6, $7, $8, NOW())`,
+        [
+          txId,
+          customerId,
+          cust.name,
+          delta >= 0 ? 'PURCHASE_STAMP' : 'STAMP_DEDUCTION',
+          delta,
+          note || `Manual adjustment by ${actorId}`,
+          prevStamps,
+          nextStamps,
+        ],
+      );
+
+      const updated = await this.getCustomerById(customerId);
+      return { success: true, customer: updated, txId };
+    });
+  },
+
+  async getLoyaltyTransactions(options: { customerId?: string; limit?: number } = {}): Promise<LoyaltyTransactionRecord[]> {
+    const where: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (options.customerId) {
+      where.push(`customer_id = $${idx++}`);
+      values.push(options.customerId);
+    }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(options.limit || 50, 1), 200);
+
+    const res = await query(
+      `SELECT * FROM loyalty_transactions ${whereClause} ORDER BY created_at DESC LIMIT ${limit}`,
+      values,
+    );
+
+    return res.rows.map((r) => ({
+      id: r.id,
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      type: r.type,
+      stampsDelta: Number(r.stamps_delta),
+      source: r.source,
+      status: r.status,
+      idempotencyKey: r.idempotency_key,
+      orderId: r.order_id,
+      rewardId: r.reward_id,
+      note: r.note,
+      previousValue: r.previous_value !== null ? Number(r.previous_value) : null,
+      newValue: r.new_value !== null ? Number(r.new_value) : null,
+      createdAt: new Date(r.created_at).toISOString(),
+    }));
+  },
+
+  async getRewardsList(options: { customerId?: string; status?: string; limit?: number } = {}): Promise<any[]> {
+    const where: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (options.customerId) {
+      where.push(`customer_id = $${idx++}`);
+      values.push(options.customerId);
+    }
+    if (options.status) {
+      where.push(`status = $${idx++}`);
+      values.push(options.status.toUpperCase());
+    }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(options.limit || 50, 1), 200);
+
+    const res = await query(
+      `SELECT * FROM rewards ${whereClause} ORDER BY issued_at DESC LIMIT ${limit}`,
+      values,
+    );
+
+    return res.rows.map((r) => ({
+      id: r.id,
+      rewardId: r.id,
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      customerPhone: r.customer_phone,
+      type: r.type,
+      status: r.status,
+      redemptionCode: r.redemption_code,
+      redemptionToken: r.redemption_token,
+      issuedAt: r.issued_at ? new Date(r.issued_at).toISOString() : null,
+      expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : null,
+      redeemedAt: r.redeemed_at ? new Date(r.redeemed_at).toISOString() : null,
+      redemptionStaffId: r.redemption_staff_id,
+      redemptionLocation: r.redemption_location,
+      sourceOrderId: r.source_order_id,
+    }));
+  },
 };

@@ -1127,6 +1127,20 @@ export const createSession = (
     expiresAt,
   });
   saveSessionsToDisk();
+
+  if (isPostgresConfigured() && role === 'CUSTOMER' && details.customerId) {
+    pgRepository
+      .saveCustomerSession({
+        sessionHash,
+        sessionId: sessionHash.substring(0, 16),
+        customerId: details.customerId,
+        role: 'CUSTOMER',
+        expiresAt,
+        createdAt: new Date().toISOString(),
+      })
+      .catch((err) => console.error('[Postgres Session Save]', err));
+  }
+
   return rawToken;
 };
 
@@ -1136,6 +1150,9 @@ export const revokeSession = (tokenOrHash: string): boolean => {
   const existed = sessionStore.delete(hash);
   if (existed) {
     saveSessionsToDisk();
+  }
+  if (isPostgresConfigured()) {
+    pgRepository.deleteCustomerSession(hash).catch(() => {});
   }
   return existed;
 };
@@ -1619,6 +1636,129 @@ const handleCustomerVerifyOtp = async (req: Request, res: Response): Promise<voi
       ? favouriteDrink.trim().substring(0, 60)
       : challenge.favouriteDrink;
 
+  if (isPostgresConfigured()) {
+    try {
+      let pgCust = await pgRepository.getCustomerByPhone(normalizedPhone);
+      if (pgCust) {
+        if (cleanName || cleanEmail || cleanDrink) {
+          pgCust =
+            (await pgRepository.updateCustomerProfile(pgCust.customerId, {
+              name: cleanName || undefined,
+              email: cleanEmail || undefined,
+              favouriteDrink: cleanDrink || undefined,
+            })) || pgCust;
+        }
+
+        const token = createSession('CUSTOMER', { customerId: pgCust.customerId });
+        const orders = await pgRepository.getOrders({ customerId: pgCust.customerId });
+        const transactions = await pgRepository.getLoyaltyTransactions({ customerId: pgCust.customerId });
+
+        logAuditEvent('CUSTOMER_PASSWORDLESS_LOGIN_SUCCESS', {
+          customerId: pgCust.customerId,
+          phoneMasked: maskPhoneForAudit(normalizedPhone),
+          ip,
+        });
+
+        res.status(200).json({
+          authenticated: true,
+          verified: true,
+          created: false,
+          welcomeBonusAwarded: false,
+          token,
+          role: 'CUSTOMER',
+          account: sanitizeLoyaltyAccount({
+            customerId: pgCust.customerId,
+            name: pgCust.name,
+            phone: pgCust.phone,
+            email: pgCust.email || undefined,
+            favouriteDrink: pgCust.favouriteDrink || undefined,
+            currentStampCount: pgCust.currentStampCount,
+            lifetimeStamps: pgCust.lifetimeStamps,
+            welcomeBonusGranted: pgCust.welcomeBonusGranted,
+            createdAt: pgCust.createdAt,
+            updatedAt: pgCust.updatedAt,
+            loyaltyStatus: pgCust.status,
+            availableRewards: pgCust.availableRewards,
+            redeemedRewards: pgCust.redeemedRewards,
+          } as any),
+          profile: {
+            customerId: pgCust.customerId,
+            name: pgCust.name,
+            phone: pgCust.phone,
+            email: pgCust.email || '',
+            favouriteDrink: pgCust.favouriteDrink || 'Flat White',
+            createdAt: pgCust.createdAt,
+            updatedAt: pgCust.updatedAt,
+          },
+          orders: orders.map(enrichOrderWithAlgiersTime),
+          transactions,
+          message: `Welcome back, ${pgCust.name}!`,
+        });
+        return;
+      }
+
+      // New Customer in Postgres (+2 Welcome Stamps)
+      const newCustId = `VENTY-${Math.floor(1000 + Math.random() * 9000)}`;
+      const createdCust = await pgRepository.createCustomer({
+        customerId: newCustId,
+        name: cleanName || 'Customer',
+        phone: normalizedPhone,
+        email: cleanEmail || null,
+        favouriteDrink: cleanDrink || 'Iced Specialty Latte',
+        welcomeBonusStamps: 2,
+      });
+
+      const token = createSession('CUSTOMER', { customerId: createdCust.customerId });
+      const transactions = await pgRepository.getLoyaltyTransactions({ customerId: createdCust.customerId });
+
+      logAuditEvent('CUSTOMER_ACCOUNT_CREATED', {
+        customerId: createdCust.customerId,
+        welcomeBonusAwarded: true,
+        stamps: 2,
+        phoneMasked: maskPhoneForAudit(normalizedPhone),
+      });
+
+      res.status(201).json({
+        authenticated: true,
+        verified: true,
+        created: true,
+        welcomeBonusAwarded: true,
+        token,
+        role: 'CUSTOMER',
+        account: sanitizeLoyaltyAccount({
+          customerId: createdCust.customerId,
+          name: createdCust.name,
+          phone: createdCust.phone,
+          email: createdCust.email || undefined,
+          favouriteDrink: createdCust.favouriteDrink || undefined,
+          currentStampCount: createdCust.currentStampCount,
+          lifetimeStamps: createdCust.lifetimeStamps,
+          welcomeBonusGranted: createdCust.welcomeBonusGranted,
+          createdAt: createdCust.createdAt,
+          updatedAt: createdCust.updatedAt,
+          loyaltyStatus: createdCust.status,
+          availableRewards: createdCust.availableRewards,
+          redeemedRewards: createdCust.redeemedRewards,
+        } as any),
+        profile: {
+          customerId: createdCust.customerId,
+          name: createdCust.name,
+          phone: createdCust.phone,
+          email: createdCust.email || '',
+          favouriteDrink: createdCust.favouriteDrink || 'Flat White',
+          createdAt: createdCust.createdAt,
+          updatedAt: createdCust.updatedAt,
+        },
+        orders: [],
+        transactions,
+        message: `Welcome to VENTY Loyalty, ${createdCust.name}! +2 Welcome stamps added to your card.`,
+      });
+      return;
+    } catch (pgErr) {
+      console.error('[Postgres Customer Auth Error, using fallback]', pgErr);
+    }
+  }
+
   const db = loadDatabase();
   let existing = db.accounts.find((a) => normalizePhoneNumber(a.phone) === normalizedPhone);
   const nowIso = new Date().toISOString();
@@ -2091,8 +2231,7 @@ app.post('/api/auth/logout', handleLogoutRequest);
 // -------------------------------------------------------------
 
 // 1. GET Customer Loyalty Account (Isolated to Authenticated Customer or Staff/Admin)
-app.get('/api/loyalty/account', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/loyalty/account', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const queryCustomerId = (req.query.customerId as string) || '';
   const phone = (req.query.phone as string) || '';
 
@@ -2116,6 +2255,42 @@ app.get('/api/loyalty/account', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (re
     targetCustomerId = queryCustomerId || req.user?.customerId;
   }
 
+  if (isPostgresConfigured()) {
+    try {
+      let cust = targetCustomerId ? await pgRepository.getCustomerById(targetCustomerId) : null;
+      if (!cust && phone && req.user?.role !== 'CUSTOMER') {
+        cust = await pgRepository.getCustomerByPhone(phone);
+      }
+      if (cust) {
+        res.json({
+          account: sanitizeLoyaltyAccount({
+            customerId: cust.customerId,
+            name: cust.name,
+            phone: cust.phone,
+            email: cust.email || undefined,
+            favouriteDrink: cust.favouriteDrink || undefined,
+            currentStampCount: cust.currentStampCount,
+            lifetimeStamps: cust.lifetimeStamps,
+            welcomeBonusGranted: cust.welcomeBonusGranted,
+            createdAt: cust.createdAt,
+            updatedAt: cust.updatedAt,
+            loyaltyStatus: cust.status,
+            availableRewards: cust.availableRewards,
+            redeemedRewards: cust.redeemedRewards,
+          } as any),
+        });
+        return;
+      }
+      if (targetCustomerId || (phone && req.user?.role !== 'CUSTOMER')) {
+        res.status(404).json({ error: 'Not Found', message: 'Loyalty account not found.' });
+        return;
+      }
+    } catch (err) {
+      console.error('[Postgres Loyalty Account Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   let match: ServerLoyaltyAccount | undefined;
   if (targetCustomerId) {
     match = db.accounts.find((a) => a.customerId === targetCustomerId);
@@ -2134,8 +2309,7 @@ app.get('/api/loyalty/account', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (re
 });
 
 // 2. GET Loyalty Transactions History (Append-only Ledger with Strict Customer Isolation)
-app.get('/api/loyalty/history', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/loyalty/history', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const queryCustomerId = (req.query.customerId as string) || '';
 
   let targetId: string | undefined;
@@ -2159,6 +2333,18 @@ app.get('/api/loyalty/history', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (re
   }
 
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '50', 10) || 50));
+
+  if (isPostgresConfigured()) {
+    try {
+      const txs = await pgRepository.getLoyaltyTransactions({ customerId: targetId, limit });
+      res.json({ transactions: txs });
+      return;
+    } catch (err) {
+      console.error('[Postgres Loyalty History Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const txs = targetId
     ? db.transactions.filter((t) => t.customerId === targetId).slice(0, limit)
     : (req.user?.role === 'STAFF' || req.user?.role === 'ADMIN' ? db.transactions.slice(0, limit) : []);

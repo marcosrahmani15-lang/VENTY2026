@@ -1,4 +1,5 @@
-import { isPostgresConfigured } from './client';
+import 'dotenv/config';
+import { isPostgresConfigured, query, testConnection } from './client';
 import { runMigrations } from './migrations';
 import { migrateJsonToPostgres } from './migrateData';
 
@@ -14,7 +15,14 @@ async function main() {
   }
 
   try {
-    console.log('Step 1: Running DDL schema migrations...');
+    console.log('Step 0: Testing PostgreSQL database connection...');
+    const ping = await testConnection();
+    if (!ping.success) {
+      throw new Error(`Database connection failed: ${ping.error}`);
+    }
+    console.log(`✓ Connected to PostgreSQL (${ping.latencyMs}ms latency)`);
+
+    console.log('\nStep 1: Running DDL schema migrations...');
     const migRes = await runMigrations();
     console.log(`✓ ${migRes.message}`);
 
@@ -27,6 +35,24 @@ async function main() {
     console.log(`  - Transactions: ${dataRes.transactionsCount}`);
     console.log(`  - Rewards: ${dataRes.rewardsCount}`);
     console.log(`  - Store Settings: ${dataRes.settingsCount}`);
+
+    console.log('\nStep 3: Verifying PostgreSQL tables and live record counts...');
+    const tables = [
+      'customers',
+      'loyalty_accounts',
+      'loyalty_transactions',
+      'rewards',
+      'orders',
+      'order_items',
+      'store_settings',
+      'customer_sessions',
+      'customer_otp_challenges',
+      'audit_logs',
+    ];
+    for (const tbl of tables) {
+      const cntRes = await query(`SELECT COUNT(*) as count FROM ${tbl}`);
+      console.log(`  - ${tbl}: ${cntRes.rows[0]?.count} rows`);
+    }
 
     console.log('\n========================================================');
     console.log('MIGRATION COMPLETED SUCCESSFULLY!');

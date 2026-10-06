@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Pool, neon } from '@neondatabase/serverless';
 
 export interface DbQueryResult<T = any> {
@@ -12,7 +13,12 @@ export interface DatabaseAdapter {
 }
 
 const getDatabaseUrl = (): string | null => {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+  const url =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.NEON_DATABASE_URL ||
+    '';
   return url.trim() ? url.trim() : null;
 };
 
@@ -88,5 +94,29 @@ export const transaction = async <T = any>(
     throw err;
   } finally {
     client.release();
+  }
+};
+
+/**
+ * Perform a live ping / connection check to verify database reachability
+ */
+export const testConnection = async (): Promise<{ success: boolean; latencyMs?: number; version?: string; error?: string }> => {
+  if (!isPostgresConfigured()) {
+    return { success: false, error: 'DATABASE_URL is not configured.' };
+  }
+  const start = Date.now();
+  try {
+    const res = await query('SELECT NOW() as current_time, version() as version');
+    const latencyMs = Date.now() - start;
+    return {
+      success: true,
+      latencyMs,
+      version: res.rows[0]?.version,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || String(err),
+    };
   }
 };
