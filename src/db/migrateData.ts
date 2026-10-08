@@ -49,7 +49,26 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
   let insertedSettings = 0;
 
   await transaction(async (client) => {
-    // 1. Insert Customers & Loyalty Accounts
+    // 0. Ensure _schema_migrations exists and check if legacy data was already imported
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS _schema_migrations (
+        id SERIAL PRIMARY KEY,
+        version VARCHAR(64) NOT NULL UNIQUE,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    const alreadyMigrated = await client.query(
+      `SELECT id FROM _schema_migrations WHERE version = $1`,
+      ['v1_legacy_data_imported'],
+    );
+
+    if (alreadyMigrated.rows.length > 0) {
+      console.log('[Data Migration] Legacy data has already been imported previously. Preserving existing production data.');
+      return;
+    }
+
+    // 1. Insert Customers & Loyalty Accounts (ONLY IF NOT PRESENT, NEVER OVERWRITE)
     for (const acc of accounts) {
       if (!acc.customerId || !acc.phone) continue;
 
@@ -62,38 +81,41 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
       const createdAt = acc.createdAt ? new Date(acc.createdAt) : new Date();
       const updatedAt = acc.updatedAt ? new Date(acc.updatedAt) : new Date();
 
-      await client.query(
-        `INSERT INTO customers (id, name, phone, email, favourite_drink, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (id) DO UPDATE SET
-           name = EXCLUDED.name,
-           email = COALESCE(EXCLUDED.email, customers.email),
-           favourite_drink = COALESCE(EXCLUDED.favourite_drink, customers.favourite_drink),
-           updated_at = EXCLUDED.updated_at
-         ON CONFLICT (phone) DO UPDATE SET
-           name = EXCLUDED.name,
-           updated_at = EXCLUDED.updated_at`,
-        [customerId, name, phone, email, favouriteDrink, status, createdAt, updatedAt],
+      const existingCust = await client.query(
+        `SELECT id FROM customers WHERE id = $1 OR phone = $2 LIMIT 1`,
+        [customerId, phone],
       );
-      insertedCustomers++;
 
-      await client.query(
-        `INSERT INTO loyalty_accounts (customer_id, current_stamp_count, lifetime_stamps, welcome_bonus_granted, status, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (customer_id) DO UPDATE SET
-           current_stamp_count = EXCLUDED.current_stamp_count,
-           lifetime_stamps = EXCLUDED.lifetime_stamps,
-           welcome_bonus_granted = EXCLUDED.welcome_bonus_granted,
-           updated_at = EXCLUDED.updated_at`,
-        [
-          customerId,
-          Number(acc.currentStampCount || 0),
-          Number(acc.lifetimeStamps || 0),
-          Boolean(acc.welcomeBonusGranted),
-          status,
-          updatedAt,
-        ],
+      if (existingCust.rows.length === 0) {
+        await client.query(
+          `INSERT INTO customers (id, name, phone, email, favourite_drink, status, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (id) DO NOTHING`,
+          [customerId, name, phone, email, favouriteDrink, status, createdAt, updatedAt],
+        );
+        insertedCustomers++;
+      }
+
+      const existingAccount = await client.query(
+        `SELECT customer_id FROM loyalty_accounts WHERE customer_id = $1 LIMIT 1`,
+        [customerId],
       );
+
+      if (existingAccount.rows.length === 0) {
+        await client.query(
+          `INSERT INTO loyalty_accounts (customer_id, current_stamp_count, lifetime_stamps, welcome_bonus_granted, status, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (customer_id) DO NOTHING`,
+          [
+            customerId,
+            Number(acc.currentStampCount || 0),
+            Number(acc.lifetimeStamps || 0),
+            Boolean(acc.welcomeBonusGranted),
+            status,
+            updatedAt,
+          ],
+        );
+      }
 
       // Collect any customer rewards
       const customerRewards = [
@@ -103,7 +125,7 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
 
       for (const r of customerRewards) {
         const rewardId = String(r.rewardId || r.id || `RW-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
-        await client.query(
+        const rewardRes = await client.query(
           `INSERT INTO rewards (
             id, customer_id, customer_name, customer_phone, type, status,
             redemption_code, redemption_token, issued_at, expires_at, redeemed_at,
@@ -126,11 +148,13 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
             r.redemptionLocation || null,
           ],
         );
-        insertedRewards++;
+        if (rewardRes.rowCount && rewardRes.rowCount > 0) {
+          insertedRewards++;
+        }
       }
     }
 
-    // 2. Insert Orders & Order Items
+    // 2. Insert Orders & Order Items (ONLY IF NOT PRESENT, NEVER OVERWRITE)
     for (const ord of orders) {
       const orderId = String(ord.orderId || ord.id).trim();
       if (!orderId) continue;
@@ -141,6 +165,12 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
         if (custCheck.rows.length === 0) {
           customerId = null;
         }
+      }
+
+      const existingOrder = await client.query(`SELECT id FROM orders WHERE id = $1 LIMIT 1`, [orderId]);
+      if (existingOrder.rows.length > 0) {
+        // Order already exists in PostgreSQL — NEVER overwrite live order state!
+        continue;
       }
 
       const customerName = String(ord.customerName || 'Valued Guest').trim();
@@ -167,12 +197,7 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
           loyalty_stamps_delta, loyalty_transaction_id, idempotency_key,
           payload_fingerprint, created_at, updated_at, completed_at, cancelled_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-        ON CONFLICT (id) DO UPDATE SET
-          status = EXCLUDED.status,
-          updated_at = EXCLUDED.updated_at,
-          completed_at = EXCLUDED.completed_at,
-          cancelled_at = EXCLUDED.cancelled_at,
-          loyalty_stamp_awarded = EXCLUDED.loyalty_stamp_awarded`,
+        ON CONFLICT (id) DO NOTHING`,
         [
           orderId,
           customerId,
@@ -222,7 +247,7 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
       }
     }
 
-    // 3. Insert Loyalty Transactions
+    // 3. Insert Loyalty Transactions (NEVER OVERWRITE)
     for (const tx of transactions) {
       const txId = String(tx.id).trim();
       if (!txId) continue;
@@ -246,7 +271,7 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
       const newValue = typeof tx.newValue === 'number' ? tx.newValue : null;
       const createdAt = tx.timestamp ? new Date(tx.timestamp) : new Date();
 
-      await client.query(
+      const txRes = await client.query(
         `INSERT INTO loyalty_transactions (
           id, customer_id, customer_name, type, stamps_delta, source, status,
           idempotency_key, order_id, reward_id, note, previous_value, new_value, created_at
@@ -269,10 +294,12 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
           createdAt,
         ],
       );
-      insertedTransactions++;
+      if (txRes.rowCount && txRes.rowCount > 0) {
+        insertedTransactions++;
+      }
     }
 
-    // 4. Store Settings & Config
+    // 4. Store Settings & Config (ONLY INSERT MISSING, NEVER OVERWRITE LIVE CONFIG)
     const settingsMap: Record<string, any> = {
       config,
       storeSettings,
@@ -281,14 +308,22 @@ export const migrateJsonToPostgres = async (jsonFilePath?: string): Promise<Migr
     };
 
     for (const [key, val] of Object.entries(settingsMap)) {
-      await client.query(
+      const setRes = await client.query(
         `INSERT INTO store_settings (key, value, updated_at)
          VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+         ON CONFLICT (key) DO NOTHING`,
         [key, JSON.stringify(val)],
       );
-      insertedSettings++;
+      if (setRes.rowCount && setRes.rowCount > 0) {
+        insertedSettings++;
+      }
     }
+
+    // 5. Mark legacy data import as completed in _schema_migrations
+    await client.query(
+      `INSERT INTO _schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`,
+      ['v1_legacy_data_imported'],
+    );
   });
 
   const durationMs = Date.now() - startTime;

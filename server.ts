@@ -10,6 +10,8 @@ import {
   runMigrations,
   migrateJsonToPostgres,
   pgRepository,
+  testConnection,
+  query,
 } from './src/db/index';
 
 dotenv.config();
@@ -841,6 +843,7 @@ let isDbWritePending = false;
 
 // Snapshot archive creator
 export const createSnapshotArchive = (db: ServerLoyaltyDB) => {
+  if (isPostgresConfigured()) return; // PostgreSQL is the durable production store of truth
   try {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const archivePath = path.resolve(BACKUPS_DIR, `venty_backup_${timestamp}.json`);
@@ -861,6 +864,7 @@ export const createSnapshotArchive = (db: ServerLoyaltyDB) => {
 };
 
 const flushDatabaseToDisk = (): void => {
+  if (isPostgresConfigured()) return; // PostgreSQL is the durable production store of truth
   if (!dbCache) return;
   if (isDbWriting) {
     isDbWritePending = true;
@@ -941,28 +945,30 @@ const saveDatabase = (db: ServerLoyaltyDB): void => {
 const initialDb = loadDatabase();
 createSnapshotArchive(initialDb);
 
-// Postgres Serverless Boot Initialization
-const initPostgresPersistence = async () => {
-  if (isPostgresConfigured()) {
-    try {
-      console.log('[Postgres] DATABASE_URL detected. Running schema migrations...');
-      await runMigrations();
-      const existing = await pgRepository.getOrders({ limit: 1 });
-      if (existing.length === 0) {
-        console.log('[Postgres] First boot detected. Migrating initial data from JSON...');
+let postgresInitPromise: Promise<void> | null = null;
+export const ensurePostgresInitialized = async (): Promise<void> => {
+  if (!isPostgresConfigured()) return;
+  if (!postgresInitPromise) {
+    postgresInitPromise = (async () => {
+      try {
+        console.log('[Postgres] Ensuring schema migrations and data are ready...');
+        await runMigrations();
         const summary = await migrateJsonToPostgres();
-        console.log(`[Postgres] Initialized ${summary.customersCount} customers, ${summary.ordersCount} orders in ${summary.durationMs}ms.`);
-      } else {
-        console.log('[Postgres] Connected to durable Neon PostgreSQL database (schema up to date).');
+        if (summary.customersCount > 0 || summary.ordersCount > 0) {
+          console.log(`[Postgres] Initial legacy data import: ${summary.customersCount} customers, ${summary.ordersCount} orders in ${summary.durationMs}ms.`);
+        } else {
+          console.log('[Postgres] Connected to durable Neon PostgreSQL database (schema & data verified).');
+        }
+      } catch (err: any) {
+        console.error('[Postgres Init Warning]', err?.message || err);
       }
-    } catch (err: any) {
-      console.error('[Postgres Init Warning]', err?.message || err);
-    }
-  } else {
-    console.log('[VENTY DB] Running in file/memory mode. Configure DATABASE_URL to enable Neon Serverless Postgres.');
+    })();
   }
+  return postgresInitPromise;
 };
-initPostgresPersistence().catch((err) => console.error('[Postgres Boot Error]', err));
+
+// Postgres Serverless Boot Initialization
+ensurePostgresInitialized().catch((err) => console.error('[Postgres Boot Error]', err));
 
 // -------------------------------------------------------------
 // 5. PERSISTENT SERVER SESSION MANAGEMENT (HASHED STORAGE)
@@ -1347,6 +1353,17 @@ const csrfProtectionMiddleware = (req: Request, res: Response, next: NextFunctio
   }
   next();
 };
+
+app.use(async (_req: Request, _res: Response, next: NextFunction) => {
+  if (isPostgresConfigured()) {
+    try {
+      await ensurePostgresInitialized();
+    } catch {
+      // Non-blocking: route handlers provide graceful error handling
+    }
+  }
+  next();
+});
 
 app.use(authenticateSession);
 app.use(csrfProtectionMiddleware);
@@ -2572,7 +2589,7 @@ export const filterQualifyingItemsForLoyalty = (items: any[], db: ServerLoyaltyD
 const activeRedemptionLocks = new Set<string>();
 const activeOrderCompletionLocks = new Set<string>();
 
-export const enrichOrderWithAlgiersTime = (order: ServerOrder) => {
+export const enrichOrderWithAlgiersTime = (order: ServerOrder | any) => {
   const db = dbCache || loadDatabase();
   const customerAcc = order.customerId
     ? db.accounts.find((a) => a.customerId === order.customerId)
@@ -2800,8 +2817,7 @@ export const reverseOrderLoyaltyStampInternal = (
   };
 };
 
-app.post('/api/loyalty/order-completed', requireRole(['STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.post('/api/loyalty/order-completed', requireRole(['STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const { orderId, customerId, customerPhone, customerName, items, totalAmount, pickupTime } = req.body;
 
   if (!orderId || typeof orderId !== 'string') {
@@ -2809,6 +2825,75 @@ app.post('/api/loyalty/order-completed', requireRole(['STAFF', 'ADMIN']), (req: 
     return;
   }
 
+  if (isPostgresConfigured()) {
+    try {
+      let cust = customerId ? await pgRepository.getCustomerById(customerId) : null;
+      if (!cust && customerPhone) {
+        cust = await pgRepository.getCustomerByPhone(customerPhone);
+      }
+      if (!cust) {
+        res.status(404).json({ error: 'Not Found', message: 'No loyalty account found for order.' });
+        return;
+      }
+
+      let order = await pgRepository.getOrderById(orderId);
+      const normalizedItems = normalizeServerOrderItems(items);
+      const computedTotal =
+        typeof totalAmount === 'number' && totalAmount > 0
+          ? totalAmount
+          : normalizedItems.reduce((sum, i) => sum + i.lineTotal, 0);
+
+      const dbFallback = loadDatabase();
+      const qualifies = filterQualifyingItemsForLoyalty(normalizedItems, dbFallback).length > 0;
+
+      if (!order) {
+        order = await pgRepository.createOrder({
+          orderId,
+          customerId: cust.customerId,
+          customerName: customerName || cust.name,
+          customerPhone: customerPhone || cust.phone,
+          pickupTime: pickupTime || '15 mins',
+          qualifiesForLoyalty: qualifies,
+          items: normalizedItems.map((item, idx) => ({
+            id: `${orderId}_item_${idx}`,
+            productId: item.productId,
+            name: item.name,
+            category: item.category || 'coffee',
+            unitPrice: item.unitPrice,
+            quantity: item.quantity,
+            lineTotal: item.lineTotal,
+          })),
+        });
+      }
+
+      const statusRes = await pgRepository.updateOrderStatus(orderId, 'COMPLETED', { stampsToReward: 7, stampsPerOrder: 1 });
+      res.json({
+        awardedStamp: statusRes.loyaltyAwarded,
+        unlockedReward: false,
+        account: statusRes.customerAccount ? sanitizeLoyaltyAccount({
+          customerId: statusRes.customerAccount.customerId,
+          name: statusRes.customerAccount.name,
+          phone: statusRes.customerAccount.phone,
+          email: statusRes.customerAccount.email || undefined,
+          favouriteDrink: statusRes.customerAccount.favouriteDrink || undefined,
+          currentStampCount: statusRes.customerAccount.currentStampCount,
+          lifetimeStamps: statusRes.customerAccount.lifetimeStamps,
+          welcomeBonusGranted: statusRes.customerAccount.welcomeBonusGranted,
+          createdAt: statusRes.customerAccount.createdAt,
+          updatedAt: statusRes.customerAccount.updatedAt,
+          loyaltyStatus: statusRes.customerAccount.status,
+          availableRewards: statusRes.customerAccount.availableRewards,
+          redeemedRewards: statusRes.customerAccount.redeemedRewards,
+        } as any) : undefined,
+        message: statusRes.loyaltyAwarded ? 'Loyalty stamp awarded for completed order.' : 'Order marked completed.',
+      });
+      return;
+    } catch (err: any) {
+      console.error('[Postgres Order Completed Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   let account: ServerLoyaltyAccount | undefined;
   if (customerId) {
     account = db.accounts.find((a) => a.customerId === customerId);
@@ -2867,8 +2952,7 @@ app.post('/api/loyalty/order-completed', requireRole(['STAFF', 'ADMIN']), (req: 
 });
 
 // 5. POST Staff Reward Verification Desk (Protected: STAFF or ADMIN role)
-app.post('/api/loyalty/verify-reward', redemptionLimiter, requireRole(['STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.post('/api/loyalty/verify-reward', redemptionLimiter, requireRole(['STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const { query } = req.body;
   const ip = getClientIp(req);
 
@@ -2878,6 +2962,50 @@ app.post('/api/loyalty/verify-reward', redemptionLimiter, requireRole(['STAFF', 
   }
 
   const clean = query.trim().toUpperCase();
+
+  if (isPostgresConfigured()) {
+    try {
+      const rwList = await pgRepository.getRewardsList({ limit: 500 });
+      const match = rwList.find(
+        (r: any) =>
+          r.redemptionCode?.toUpperCase() === clean ||
+          r.redemptionToken === query.trim() ||
+          r.id?.toUpperCase() === clean,
+      );
+      if (match) {
+        const record = rateLimitStore.get(ip);
+        if (record) record.failedAttempts = 0;
+
+        const isExpired = match.expiresAt ? new Date(match.expiresAt).getTime() < Date.now() : false;
+        let status = match.status;
+        if (status === 'AVAILABLE' && isExpired) status = 'EXPIRED';
+
+        logAuditEvent('REWARD_VERIFIED', { rewardId: match.id, status, staffId: req.user?.staffId });
+        res.json({
+          valid: status === 'AVAILABLE' && !isExpired,
+          reward: match,
+          customer: {
+            customerId: match.customerId,
+            name: match.customerName,
+            phone: match.customerPhone,
+          },
+          status,
+          isExpired,
+          message:
+            status === 'AVAILABLE'
+              ? 'Valid Free Drink Reward ready to redeem.'
+              : status === 'REDEEMED'
+              ? 'This reward has already been redeemed.'
+              : 'Reward is expired or cancelled.',
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[Postgres Verify Reward Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
 
   for (const account of db.accounts) {
     const allRewards = [...account.availableRewards, ...account.redeemedRewards];
@@ -2939,8 +3067,7 @@ app.post('/api/loyalty/verify-reward', redemptionLimiter, requireRole(['STAFF', 
 });
 
 // 6. POST Server-Authoritative Atomic Reward Redemption (Protected: STAFF or ADMIN role)
-app.post('/api/loyalty/redeem', redemptionLimiter, requireRole(['STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.post('/api/loyalty/redeem', redemptionLimiter, requireRole(['STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const { rewardId, redemptionCode, redemptionToken, location = 'Miliana Roastery Counter', orderId } = req.body || {};
 
   const lockKey = String(rewardId || redemptionCode || redemptionToken || '').trim().toUpperCase();
@@ -2951,9 +3078,51 @@ app.post('/api/loyalty/redeem', redemptionLimiter, requireRole(['STAFF', 'ADMIN'
   if (lockKey) activeRedemptionLocks.add(lockKey);
 
   try {
-    // Derive staff identity securely from server session
     const staffId = req.user?.staffId || req.user?.adminId || 'Staff-Miliana';
 
+    if (isPostgresConfigured()) {
+      try {
+        const codeOrId = String(rewardId || redemptionCode || redemptionToken || '').trim();
+        const redeemRes = await pgRepository.redeemReward(codeOrId, { staffId, location });
+        if (redeemRes.success) {
+          logAuditEvent('REWARD_REDEEMED', { rewardId: redeemRes.reward.id, customerId: redeemRes.reward.customer_id, staffId, location });
+          const cust = redeemRes.reward.customer_id ? await pgRepository.getCustomerById(redeemRes.reward.customer_id) : null;
+          res.json({
+            success: true,
+            message: `🎉 Reward ${redeemRes.reward.redemption_code || redeemRes.reward.id} successfully redeemed! Enjoy your free drink.`,
+            reward: redeemRes.reward,
+            account: cust ? sanitizeLoyaltyAccount({
+              customerId: cust.customerId,
+              name: cust.name,
+              phone: cust.phone,
+              email: cust.email || undefined,
+              favouriteDrink: cust.favouriteDrink || undefined,
+              currentStampCount: cust.currentStampCount,
+              lifetimeStamps: cust.lifetimeStamps,
+              welcomeBonusGranted: cust.welcomeBonusGranted,
+              createdAt: cust.createdAt,
+              updatedAt: cust.updatedAt,
+              loyaltyStatus: cust.status,
+              availableRewards: cust.availableRewards,
+              redeemedRewards: cust.redeemedRewards,
+            } as any) : undefined,
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.error('[Postgres Redeem Error]', err);
+        if (err?.message?.includes('already been redeemed')) {
+          res.status(409).json({ success: false, message: err.message });
+          return;
+        }
+        if (err?.message?.includes('not found')) {
+          res.status(404).json({ success: false, message: err.message });
+          return;
+        }
+      }
+    }
+
+    const db = loadDatabase();
     let targetAccount: ServerLoyaltyAccount | undefined;
     let targetReward: ServerLoyaltyReward | undefined;
 
@@ -3047,11 +3216,8 @@ app.post('/api/loyalty/redeem', redemptionLimiter, requireRole(['STAFF', 'ADMIN'
 });
 
 // 7. POST Admin Audited Balance Adjustment (Strictly Protected: ADMIN role only)
-app.post('/api/loyalty/admin/adjust', adminLimiter, requireRole(['ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.post('/api/loyalty/admin/adjust', adminLimiter, requireRole(['ADMIN']), async (req: Request, res: Response) => {
   const { customerId, stampsDelta, reason } = req.body;
-
-  // Derive adminId from trusted session
   const adminId = req.user?.adminId || 'VENTY-ADMIN';
 
   if (!customerId || stampsDelta === undefined || !reason) {
@@ -3059,6 +3225,43 @@ app.post('/api/loyalty/admin/adjust', adminLimiter, requireRole(['ADMIN']), (req
     return;
   }
 
+  if (isPostgresConfigured()) {
+    try {
+      const targetToReward = 7;
+      const adjRes = await pgRepository.adjustCustomerStamps(customerId, Number(stampsDelta), reason, adminId);
+      if (adjRes.success && adjRes.customer) {
+        logAuditEvent('ADMIN_ADJUSTMENT', { customerId, effectiveDelta: stampsDelta, reason, adminId });
+        res.json({
+          success: true,
+          message: `Account updated: ${adjRes.customer.currentStampCount}/${targetToReward} stamps.`,
+          account: sanitizeLoyaltyAccount({
+            customerId: adjRes.customer.customerId,
+            name: adjRes.customer.name,
+            phone: adjRes.customer.phone,
+            email: adjRes.customer.email || undefined,
+            favouriteDrink: adjRes.customer.favouriteDrink || undefined,
+            currentStampCount: adjRes.customer.currentStampCount,
+            lifetimeStamps: adjRes.customer.lifetimeStamps,
+            welcomeBonusGranted: adjRes.customer.welcomeBonusGranted,
+            createdAt: adjRes.customer.createdAt,
+            updatedAt: adjRes.customer.updatedAt,
+            loyaltyStatus: adjRes.customer.status,
+            availableRewards: adjRes.customer.availableRewards,
+            redeemedRewards: adjRes.customer.redeemedRewards,
+          } as any),
+        });
+        return;
+      }
+    } catch (err: any) {
+      console.error('[Postgres Admin Adjust Error]', err);
+      if (err?.message?.includes('not found')) {
+        res.status(404).json({ error: 'Not Found', message: err.message });
+        return;
+      }
+    }
+  }
+
+  const db = loadDatabase();
   const account = db.accounts.find((a) => a.customerId === customerId);
   if (!account) {
     res.status(404).json({ error: 'Not Found', message: 'Customer account not found.' });
@@ -3195,8 +3398,7 @@ app.post('/api/loyalty/order-reversal', adminLimiter, requireRole(['ADMIN']), (r
 // -------------------------------------------------------------
 
 // GET Authenticated Customer Profile + Summary Stats
-app.get('/api/customer/profile', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/customer/profile', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const queryCustomerId = (req.query.customerId as string) || '';
 
   let targetCustomerId: string | undefined;
@@ -3223,6 +3425,53 @@ app.get('/api/customer/profile', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (r
     return;
   }
 
+  if (isPostgresConfigured()) {
+    try {
+      const cust = await pgRepository.getCustomerById(targetCustomerId);
+      if (cust) {
+        const custOrders = await pgRepository.getOrders({ customerId: targetCustomerId, limit: 100 });
+        const completedOrders = custOrders.filter((o) => o.status === 'COMPLETED');
+        res.json({
+          profile: {
+            customerId: cust.customerId,
+            name: cust.name,
+            phone: cust.phone,
+            email: cust.email || '',
+            favouriteDrink: cust.favouriteDrink || 'Flat White',
+            createdAt: cust.createdAt,
+            updatedAt: cust.updatedAt,
+          },
+          account: sanitizeLoyaltyAccount({
+            customerId: cust.customerId,
+            name: cust.name,
+            phone: cust.phone,
+            email: cust.email || undefined,
+            favouriteDrink: cust.favouriteDrink || undefined,
+            currentStampCount: cust.currentStampCount,
+            lifetimeStamps: cust.lifetimeStamps,
+            welcomeBonusGranted: cust.welcomeBonusGranted,
+            createdAt: cust.createdAt,
+            updatedAt: cust.updatedAt,
+            loyaltyStatus: cust.status,
+            availableRewards: cust.availableRewards,
+            redeemedRewards: cust.redeemedRewards,
+          } as any),
+          stats: {
+            totalOrders: custOrders.length,
+            completedOrders: completedOrders.length,
+            totalSpent: completedOrders.reduce((sum, o) => sum + o.totalAmount, 0),
+          },
+        });
+        return;
+      }
+      res.status(404).json({ error: 'Not Found', message: 'Customer profile not found.' });
+      return;
+    } catch (err) {
+      console.error('[Postgres Profile Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const account = db.accounts.find((a) => a.customerId === targetCustomerId);
   if (!account) {
     res.status(404).json({ error: 'Not Found', message: 'Customer profile not found.' });
@@ -3252,8 +3501,7 @@ app.get('/api/customer/profile', requireRole(['CUSTOMER', 'STAFF', 'ADMIN']), (r
 });
 
 // PUT Update Authenticated Customer Profile
-app.put('/api/customer/profile', requireRole(['CUSTOMER', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.put('/api/customer/profile', requireRole(['CUSTOMER', 'ADMIN']), async (req: Request, res: Response) => {
   const targetCustomerId =
     req.user?.role === 'CUSTOMER'
       ? req.user.customerId
@@ -3264,13 +3512,76 @@ app.put('/api/customer/profile', requireRole(['CUSTOMER', 'ADMIN']), (req: Reque
     return;
   }
 
+  if (!targetCustomerId) {
+    res.status(400).json({ error: 'Bad Request', message: 'customerId is required.' });
+    return;
+  }
+
+  const { name, phone, email, favouriteDrink } = req.body;
+
+  if (isPostgresConfigured()) {
+    try {
+      const cleanNewPhone = phone ? normalizePhoneNumber(phone) : undefined;
+      if (cleanNewPhone && !isValidNormalizedPhone(cleanNewPhone)) {
+        res.status(400).json({ error: 'Bad Request', message: 'Please provide a valid phone number.' });
+        return;
+      }
+      const updated = await pgRepository.updateCustomerProfile(targetCustomerId, {
+        name: typeof name === 'string' && name.trim() ? name.trim().substring(0, 80) : undefined,
+        email: typeof email === 'string' && email.trim() ? email.trim().substring(0, 100) : undefined,
+        favouriteDrink: typeof favouriteDrink === 'string' && favouriteDrink.trim() ? favouriteDrink.trim().substring(0, 60) : undefined,
+        phone: cleanNewPhone,
+      });
+      if (updated) {
+        logAuditEvent('CUSTOMER_PROFILE_UPDATED', { customerId: updated.customerId });
+        res.json({
+          success: true,
+          profile: {
+            customerId: updated.customerId,
+            name: updated.name,
+            phone: updated.phone,
+            email: updated.email || '',
+            favouriteDrink: updated.favouriteDrink || 'Flat White',
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          },
+          account: sanitizeLoyaltyAccount({
+            customerId: updated.customerId,
+            name: updated.name,
+            phone: updated.phone,
+            email: updated.email || undefined,
+            favouriteDrink: updated.favouriteDrink || undefined,
+            currentStampCount: updated.currentStampCount,
+            lifetimeStamps: updated.lifetimeStamps,
+            welcomeBonusGranted: updated.welcomeBonusGranted,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+            loyaltyStatus: updated.status,
+            availableRewards: updated.availableRewards,
+            redeemedRewards: updated.redeemedRewards,
+          } as any),
+          message: 'Customer profile updated successfully.',
+        });
+        return;
+      }
+      res.status(404).json({ error: 'Not Found', message: 'Customer profile not found.' });
+      return;
+    } catch (err: any) {
+      console.error('[Postgres Update Customer Profile Error]', err);
+      if (err?.message?.includes('duplicate key') || err?.message?.includes('unique constraint') || err?.message?.includes('phone')) {
+        res.status(409).json({ error: 'Conflict', message: 'Another customer account is already registered with that phone number.' });
+        return;
+      }
+    }
+  }
+
+  const db = loadDatabase();
   const account = db.accounts.find((a) => a.customerId === targetCustomerId);
   if (!account) {
     res.status(404).json({ error: 'Not Found', message: 'Customer profile not found.' });
     return;
   }
 
-  const { name, phone, email, favouriteDrink } = req.body;
   if (name !== undefined && typeof name === 'string' && name.trim()) {
     account.name = name.trim().substring(0, 80);
   }
@@ -3323,8 +3634,7 @@ app.put('/api/customer/profile', requireRole(['CUSTOMER', 'ADMIN']), (req: Reque
 });
 
 // POST Create New Order (Server-Generated Unguessable IDs, Session-Derived Customer Identity & Strict Idempotency)
-app.post('/api/orders', (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.post('/api/orders', async (req: Request, res: Response) => {
   const {
     items,
     orderItems,
@@ -3353,28 +3663,6 @@ app.post('/api/orders', (req: Request, res: Response) => {
   }
 
   const totalAmount = normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0);
-  const qualifiesForLoyalty = filterQualifyingItemsForLoyalty(normalizedItems, db).length > 0;
-
-  // Derive customerId strictly from authenticated server session when CUSTOMER is logged in.
-  // NEVER trust a customerId or unverified phone number sent from an unauthenticated request.
-  let resolvedAccount: ServerLoyaltyAccount | undefined;
-  let resolvedCustomerId: string | null = null;
-
-  if (req.user?.role === 'CUSTOMER' && req.user.customerId) {
-    resolvedAccount = db.accounts.find((a) => a.customerId === req.user?.customerId);
-    resolvedCustomerId = resolvedAccount ? resolvedAccount.customerId : req.user.customerId;
-  } else if ((req.user?.role === 'STAFF' || req.user?.role === 'ADMIN') && req.body.customerId) {
-    resolvedAccount = db.accounts.find((a) => a.customerId === req.body.customerId);
-    if (resolvedAccount) resolvedCustomerId = resolvedAccount.customerId;
-  } else if ((req.user?.role === 'STAFF' || req.user?.role === 'ADMIN') && customerPhone && typeof customerPhone === 'string') {
-    const cleanPhone = normalizePhoneNumber(customerPhone);
-    if (cleanPhone) {
-      resolvedAccount = db.accounts.find((a) => normalizePhoneNumber(a.phone) === cleanPhone);
-      if (resolvedAccount) {
-        resolvedCustomerId = resolvedAccount.customerId;
-      }
-    }
-  }
 
   // Validate idempotency key format
   const sanitizedIdempotencyKey =
@@ -3392,6 +3680,156 @@ app.post('/api/orders', (req: Request, res: Response) => {
       }),
     )
     .digest('hex');
+
+  const nowMs = Date.now();
+
+  let resolvedCustomerId: string | null = null;
+  if (req.user?.role === 'CUSTOMER' && req.user.customerId) {
+    resolvedCustomerId = req.user.customerId;
+  } else if ((req.user?.role === 'STAFF' || req.user?.role === 'ADMIN') && req.body.customerId) {
+    resolvedCustomerId = req.body.customerId;
+  }
+
+  if (isPostgresConfigured()) {
+    try {
+      const qualifiesForLoyalty = normalizedItems.some(
+        (it) => it.category === 'coffee' || it.category === 'espresso' || it.category === 'cold' || it.category === 'drinks',
+      );
+
+      if (sanitizedIdempotencyKey) {
+        const matchedByIdempotency = await pgRepository.getOrderByIdempotencyKey(sanitizedIdempotencyKey);
+        if (matchedByIdempotency) {
+          if (
+            matchedByIdempotency.customerId &&
+            resolvedCustomerId &&
+            matchedByIdempotency.customerId !== resolvedCustomerId
+          ) {
+            res.status(409).json({
+              error: 'Conflict',
+              message: 'Idempotency key has already been claimed by another customer account.',
+            });
+            return;
+          }
+          if ((matchedByIdempotency as any).payloadFingerprint === payloadFingerprint) {
+            res.status(200).json({
+              created: false,
+              duplicatePrevented: true,
+              order: enrichOrderWithAlgiersTime(matchedByIdempotency),
+            });
+            return;
+          } else {
+            res.status(409).json({
+              error: 'Conflict',
+              message: 'Idempotency key was previously submitted with a different order payload.',
+            });
+            return;
+          }
+        }
+      }
+
+      const existingRapidOrder = await pgRepository.getOrderByFingerprint(payloadFingerprint);
+      if (existingRapidOrder && resolvedCustomerId && existingRapidOrder.customerId === resolvedCustomerId) {
+        const createdMs = new Date(existingRapidOrder.createdAt).getTime();
+        if (!isNaN(createdMs) && Math.abs(nowMs - createdMs) < 4000) {
+          res.status(200).json({
+            created: false,
+            duplicatePrevented: true,
+            order: enrichOrderWithAlgiersTime(existingRapidOrder),
+          });
+          return;
+        }
+      }
+
+      let pgCust = resolvedCustomerId ? await pgRepository.getCustomerById(resolvedCustomerId) : null;
+      if (!pgCust && customerPhone && (req.user?.role === 'STAFF' || req.user?.role === 'ADMIN')) {
+        pgCust = await pgRepository.getCustomerByPhone(customerPhone);
+      }
+
+      const randomSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const generatedOrderId = `VENTY-${Date.now().toString(36).toUpperCase()}-${randomSuffix}`;
+      const initialStatus: ServerOrderStatus =
+        req.user?.role === 'STAFF' || req.user?.role === 'ADMIN'
+          ? normalizeServerOrderStatus(requestedStatus)
+          : 'PENDING';
+
+      const createdOrder = await pgRepository.createOrder({
+        orderId: generatedOrderId,
+        customerId: pgCust ? pgCust.customerId : resolvedCustomerId,
+        customerName:
+          (typeof customerName === 'string' && customerName.trim().substring(0, 80)) ||
+          pgCust?.name ||
+          'Valued Guest',
+        customerPhone:
+          (typeof customerPhone === 'string' && customerPhone.trim().substring(0, 30)) ||
+          pgCust?.phone ||
+          null,
+        pickupTime: String(pickupTime || '15 mins').substring(0, 40),
+        notes: notes ? String(notes).substring(0, 200) : null,
+        status: initialStatus,
+        qualifiesForLoyalty,
+        idempotencyKey: sanitizedIdempotencyKey,
+        payloadFingerprint,
+        items: normalizedItems.map((item, idx) => ({
+          id: `${generatedOrderId}_item_${idx}`,
+          productId: item.productId,
+          name: item.name,
+          category: item.category || 'coffee',
+          unitPrice: item.unitPrice,
+          quantity: item.quantity,
+          lineTotal: item.lineTotal,
+        })),
+      });
+
+      let loyaltyResult: any = null;
+      let finalOrder = createdOrder;
+      if (initialStatus === 'COMPLETED') {
+        const statusRes = await pgRepository.updateOrderStatus(createdOrder.id, 'COMPLETED');
+        finalOrder = statusRes.order;
+        loyaltyResult = {
+          awardedStamp: statusRes.loyaltyAwarded,
+          account: statusRes.customerAccount,
+          message: statusRes.loyaltyAwarded ? 'Loyalty stamp awarded for completed order.' : 'Order completed.',
+        };
+      }
+
+      logAuditEvent('ORDER_CREATED', {
+        orderId: finalOrder.id,
+        customerId: finalOrder.customerId,
+        totalAmount: finalOrder.totalAmount,
+        status: finalOrder.status,
+      });
+
+      res.status(201).json({
+        created: true,
+        order: enrichOrderWithAlgiersTime(finalOrder),
+        loyaltyResult,
+      });
+      return;
+    } catch (pgErr) {
+      console.error('[Postgres Order Creation Error, falling back to local]', pgErr);
+    }
+  }
+
+  const db = loadDatabase();
+  const qualifiesForLoyalty = filterQualifyingItemsForLoyalty(normalizedItems, db).length > 0;
+
+  // Derive customerId strictly from authenticated server session when CUSTOMER is logged in.
+  let resolvedAccount: ServerLoyaltyAccount | undefined;
+  if (req.user?.role === 'CUSTOMER' && req.user.customerId) {
+    resolvedAccount = db.accounts.find((a) => a.customerId === req.user?.customerId);
+    resolvedCustomerId = resolvedAccount ? resolvedAccount.customerId : req.user.customerId;
+  } else if ((req.user?.role === 'STAFF' || req.user?.role === 'ADMIN') && req.body.customerId) {
+    resolvedAccount = db.accounts.find((a) => a.customerId === req.body.customerId);
+    if (resolvedAccount) resolvedCustomerId = resolvedAccount.customerId;
+  } else if ((req.user?.role === 'STAFF' || req.user?.role === 'ADMIN') && customerPhone && typeof customerPhone === 'string') {
+    const cleanPhone = normalizePhoneNumber(customerPhone);
+    if (cleanPhone) {
+      resolvedAccount = db.accounts.find((a) => normalizePhoneNumber(a.phone) === cleanPhone);
+      if (resolvedAccount) {
+        resolvedCustomerId = resolvedAccount.customerId;
+      }
+    }
+  }
 
   // Idempotency check
   if (sanitizedIdempotencyKey) {
@@ -3434,7 +3872,6 @@ app.post('/api/orders', (req: Request, res: Response) => {
     .map((i) => `${i.productId}:${i.quantity}:${i.notes || ''}`)
     .sort()
     .join('|');
-  const nowMs = Date.now();
 
   const existingRapidOrder = db.orders.find((o) => {
     if (resolvedCustomerId && o.customerId === resolvedCustomerId) {
@@ -3522,8 +3959,7 @@ app.post('/api/orders', (req: Request, res: Response) => {
 });
 
 // GET Customer's Own Order History ("My Orders" — Strictly Isolated to Authenticated Customer)
-app.get('/api/orders/my-orders', requireRole(['CUSTOMER']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/orders/my-orders', requireRole(['CUSTOMER']), async (req: Request, res: Response) => {
   const queryCustomerId = (req.query.customerId as string) || '';
 
   let targetCustomerId: string | undefined;
@@ -3553,6 +3989,20 @@ app.get('/api/orders/my-orders', requireRole(['CUSTOMER']), (req: Request, res: 
     return;
   }
 
+  if (isPostgresConfigured()) {
+    try {
+      const myOrders = await pgRepository.getOrders({ customerId: targetCustomerId, limit: 100 });
+      res.json({
+        orders: myOrders.map(enrichOrderWithAlgiersTime),
+        timezone: VENTY_TIMEZONE,
+      });
+      return;
+    } catch (err) {
+      console.error('[Postgres My Orders Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const customerOrders = db.orders
     .filter((o) => o.customerId === targetCustomerId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -3565,9 +4015,43 @@ app.get('/api/orders/my-orders', requireRole(['CUSTOMER']), (req: Request, res: 
 });
 
 // GET Single Order by ID (For Customer Order Tracking — Enforces Strict Customer Ownership)
-app.get('/api/orders/:orderId', (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/orders/:orderId', async (req: Request, res: Response) => {
   const orderId = String(req.params.orderId || '').trim();
+
+  if (isPostgresConfigured()) {
+    try {
+      const targetOrder = await pgRepository.getOrderById(orderId);
+      if (!targetOrder) {
+        res.status(404).json({ error: 'Not Found', message: `Order #${orderId} not found.` });
+        return;
+      }
+      if (targetOrder.customerId) {
+        const isStaffOrAdmin = req.user?.role === 'STAFF' || req.user?.role === 'ADMIN';
+        const isOwnerCustomer = req.user?.role === 'CUSTOMER' && req.user.customerId === targetOrder.customerId;
+        if (!isStaffOrAdmin && !isOwnerCustomer) {
+          logAuditEvent('UNAUTHORIZED_ORDER_ACCESS_ATTEMPT', {
+            orderId,
+            orderOwnerId: targetOrder.customerId,
+            requesterId: req.user?.customerId || 'UNAUTHENTICATED',
+          });
+          res.status(403).json({
+            error: 'Forbidden',
+            message: 'You are not authorized to access another customer\'s order.',
+          });
+          return;
+        }
+      }
+      res.json({
+        order: enrichOrderWithAlgiersTime(targetOrder),
+        timezone: VENTY_TIMEZONE,
+      });
+      return;
+    } catch (err) {
+      console.error('[Postgres Single Order Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const targetOrder = db.orders.find((o) => o.orderId === orderId || o.id === orderId);
 
   if (!targetOrder) {
@@ -3600,8 +4084,7 @@ app.get('/api/orders/:orderId', (req: Request, res: Response) => {
 });
 
 // GET Admin & Staff Order Dashboard (Grouped by Africa/Algiers Business Date + Metrics)
-app.get('/api/orders', requireRole(['STAFF', 'ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/orders', requireRole(['STAFF', 'ADMIN']), async (req: Request, res: Response) => {
   const period = ((req.query.period as string) || 'TODAY').toUpperCase().replace(/\s+/g, '_');
   const statusFilter = ((req.query.status as string) || 'ALL').toUpperCase();
   const searchQuery = ((req.query.search as string) || '').trim().toLowerCase();
@@ -3609,6 +4092,72 @@ app.get('/api/orders', requireRole(['STAFF', 'ADMIN']), (req: Request, res: Resp
 
   const now = new Date();
   const boundaries = getAlgiersBusinessBoundaries(now);
+
+  if (isPostgresConfigured()) {
+    try {
+      const pgOrders = await pgRepository.getOrders({
+        customerId: customerIdFilter || undefined,
+        status: statusFilter !== 'ALL' ? statusFilter : undefined,
+        search: searchQuery || undefined,
+        limit: 300,
+      });
+
+      const allOrders = await pgRepository.getOrders({ limit: 500 });
+      const todayOrders = allOrders.filter((o) => matchesAlgiersDateFilter(o.createdAt, 'TODAY', now));
+      const todayCompleted = todayOrders.filter((o) => o.status === 'COMPLETED');
+      const todayPending = todayOrders.filter((o) =>
+        ['PENDING', 'CONFIRMED', 'PREPARING', 'READY'].includes(o.status),
+      );
+      const todayCancelled = todayOrders.filter((o) => o.status === 'CANCELLED');
+      const todaySales = todayOrders
+        .filter((o) => o.status !== 'CANCELLED')
+        .reduce((sum, o) => sum + o.totalAmount, 0);
+      const todayQualifyingLoyaltyOrders = todayOrders.filter(
+        (o) => o.status !== 'CANCELLED' && (o.qualifiesForLoyalty || o.loyaltyStampAwarded),
+      ).length;
+
+      let filtered = pgOrders.filter((o) => matchesAlgiersDateFilter(o.createdAt, period, now));
+      const periodCompleted = filtered.filter((o) => o.status === 'COMPLETED').length;
+      const periodPending = filtered.filter((o) =>
+        ['PENDING', 'CONFIRMED', 'PREPARING', 'READY'].includes(o.status),
+      ).length;
+      const periodCancelled = filtered.filter((o) => o.status === 'CANCELLED').length;
+      const periodSales = filtered
+        .filter((o) => o.status !== 'CANCELLED')
+        .reduce((sum, o) => sum + o.totalAmount, 0);
+      const periodQualifying = filtered.filter(
+        (o) => o.status !== 'CANCELLED' && (o.qualifiesForLoyalty || o.loyaltyStampAwarded),
+      ).length;
+
+      const metrics = {
+        totalOrders: period === 'TODAY' ? todayOrders.length : filtered.length,
+        completedOrders: period === 'TODAY' ? todayCompleted.length : periodCompleted,
+        pendingOrders: period === 'TODAY' ? todayPending.length : periodPending,
+        cancelledOrders: period === 'TODAY' ? todayCancelled.length : periodCancelled,
+        todaySales,
+        todayQualifyingLoyaltyOrders,
+        periodSales,
+        periodQualifyingLoyaltyOrders: periodQualifying,
+        algiersTodayKey: boundaries.todayKey,
+        algiersTodayLabel: boundaries.todayLabel,
+        timezone: VENTY_TIMEZONE,
+      };
+
+      res.json({
+        orders: filtered.map(enrichOrderWithAlgiersTime),
+        metrics,
+        period,
+        timezone: VENTY_TIMEZONE,
+        algiersTodayKey: boundaries.todayKey,
+        algiersTodayLabel: boundaries.todayLabel,
+      });
+      return;
+    } catch (err) {
+      console.error('[Postgres Orders Dashboard Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
 
   // 1. Compute Today's Metrics in Africa/Algiers across all orders
   const todayOrders = db.orders.filter((o) => matchesAlgiersDateFilter(o.createdAt, 'TODAY', now));
@@ -3685,8 +4234,7 @@ app.get('/api/orders', requireRole(['STAFF', 'ADMIN']), (req: Request, res: Resp
 });
 
 // PATCH / POST Update Order Status (Strictly Protected: STAFF or ADMIN role only)
-const handleOrderStatusUpdate = (req: Request, res: Response) => {
-  const db = loadDatabase();
+const handleOrderStatusUpdate = async (req: Request, res: Response) => {
   const orderId = String(req.params.orderId || '').trim();
   const { status: rawStatus, reason } = req.body || {};
 
@@ -3702,14 +4250,107 @@ const handleOrderStatusUpdate = (req: Request, res: Response) => {
   activeOrderCompletionLocks.add(orderId);
 
   try {
+    const nextStatus = normalizeServerOrderStatus(rawStatus);
+
+    if (isPostgresConfigured()) {
+      try {
+        const existing = await pgRepository.getOrderById(orderId);
+        if (!existing) {
+          res.status(404).json({ error: 'Not Found', message: `Order #${orderId} not found.` });
+          return;
+        }
+
+        if (existing.status === nextStatus) {
+          res.json({
+            success: true,
+            order: enrichOrderWithAlgiersTime(existing),
+            message: `Order #${orderId} is already ${nextStatus}.`,
+          });
+          return;
+        }
+
+        if (existing.status === 'CANCELLED') {
+          res.status(400).json({
+            error: 'Bad Request',
+            message: 'Cannot change status of a CANCELLED order. Cancelled orders are terminal.',
+          });
+          return;
+        }
+
+        if (existing.status === 'COMPLETED' && nextStatus !== 'CANCELLED') {
+          res.status(400).json({
+            error: 'Bad Request',
+            message: `Cannot transition a COMPLETED order back to ${nextStatus}.`,
+          });
+          return;
+        }
+
+        if (existing.status === 'COMPLETED' && nextStatus === 'CANCELLED' && req.user?.role !== 'ADMIN') {
+          res.status(403).json({
+            error: 'Forbidden',
+            message: 'Only an ADMIN can cancel/reverse an already COMPLETED order.',
+          });
+          return;
+        }
+
+        const updateRes = await pgRepository.updateOrderStatus(orderId, nextStatus, {
+          stampsToReward: 7,
+          stampsPerOrder: 1,
+          allowAdminCancellation: req.user?.role === 'ADMIN',
+          cancellationReason: reason,
+          actorId: req.user?.adminId || req.user?.staffId || 'VENTY-STAFF',
+        });
+
+        logAuditEvent('ORDER_STATUS_UPDATED', {
+          orderId,
+          previousStatus: existing.status,
+          status: nextStatus,
+          actorRole: req.user?.role || 'SYSTEM_LIFECYCLE',
+        });
+
+        res.json({
+          success: true,
+          order: enrichOrderWithAlgiersTime(updateRes.order),
+          loyaltyResult: updateRes.loyaltyAwarded ? { awardedStamp: true, message: '+1 Loyalty Stamp awarded.' } : null,
+          account: updateRes.customerAccount ? sanitizeLoyaltyAccount({
+            customerId: updateRes.customerAccount.customerId,
+            name: updateRes.customerAccount.name,
+            phone: updateRes.customerAccount.phone,
+            email: updateRes.customerAccount.email || undefined,
+            favouriteDrink: updateRes.customerAccount.favouriteDrink || undefined,
+            currentStampCount: updateRes.customerAccount.currentStampCount,
+            lifetimeStamps: updateRes.customerAccount.lifetimeStamps,
+            welcomeBonusGranted: updateRes.customerAccount.welcomeBonusGranted,
+            createdAt: updateRes.customerAccount.createdAt,
+            updatedAt: updateRes.customerAccount.updatedAt,
+            loyaltyStatus: updateRes.customerAccount.status,
+            availableRewards: updateRes.customerAccount.availableRewards,
+            redeemedRewards: updateRes.customerAccount.redeemedRewards,
+          } as any) : undefined,
+          message: `Order #${orderId} status updated to ${nextStatus}.`,
+        });
+        return;
+      } catch (pgErr: any) {
+        console.error('[Postgres Order Status Update Error]', pgErr);
+        if (pgErr?.message?.includes('not found')) {
+          res.status(404).json({ error: 'Not Found', message: pgErr.message });
+          return;
+        }
+        if (pgErr?.message?.includes('terminal') || pgErr?.message?.includes('cannot transition')) {
+          res.status(400).json({ error: 'Bad Request', message: pgErr.message });
+          return;
+        }
+      }
+    }
+
+    const db = loadDatabase();
     const order = db.orders.find((o) => o.orderId === orderId || o.id === orderId);
     if (!order) {
       res.status(404).json({ error: 'Not Found', message: `Order #${orderId} not found.` });
       return;
     }
 
-  const nextStatus = normalizeServerOrderStatus(rawStatus);
-  const currentStatus = order.status;
+    const currentStatus = order.status;
 
   // Idempotent no-op if status is already in the requested state
   if (currentStatus === nextStatus) {
@@ -4638,10 +5279,61 @@ app.get('/api/management/orders', requireRole(['STAFF', 'ADMIN']), handleManagem
 app.get('/api/loyalty/orders', requireRole(['STAFF', 'ADMIN']), handleManagementOrdersList);
 
 // 3. GET Customers Directory with Order History, Loyalty History & Reward History (ADMIN ONLY)
-app.get('/api/management/customers', adminLimiter, requireRole(['ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.get('/api/management/customers', adminLimiter, requireRole(['ADMIN']), async (req: Request, res: Response) => {
   const query = ((req.query.search as string) || (req.query.query as string) || '').trim().toLowerCase();
   const statusFilter = ((req.query.status as string) || 'ALL').trim().toUpperCase();
+
+  if (isPostgresConfigured()) {
+    try {
+      const pgCusts = await pgRepository.getAllCustomers({
+        search: query || undefined,
+        status: statusFilter !== 'ALL' ? statusFilter : undefined,
+        limit: 200,
+      });
+
+      const enriched = await Promise.all(
+        pgCusts.map(async (c) => {
+          const custOrders = await pgRepository.getOrders({ customerId: c.customerId, limit: 30 });
+          const custTxs = await pgRepository.getLoyaltyTransactions({ customerId: c.customerId, limit: 50 });
+          const completedOrders = custOrders.filter((o) => o.status === 'COMPLETED');
+          const totalSpent = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+
+          return {
+            customerId: c.customerId,
+            name: c.name,
+            phone: c.phone,
+            email: c.email || '',
+            favouriteDrink: c.favouriteDrink || 'Flat White',
+            currentStampCount: c.currentStampCount,
+            lifetimeStamps: c.lifetimeStamps,
+            welcomeBonusGranted: c.welcomeBonusGranted,
+            loyaltyStatus: c.status || 'Active',
+            accountStatus: c.status === 'Suspended' ? 'Suspended' : 'Active',
+            createdAt: c.createdAt,
+            updatedAt: c.updatedAt,
+            availableRewards: [],
+            redeemedRewards: [],
+            allRewards: [],
+            transactions: custTxs,
+            totalOrders: custOrders.length,
+            completedOrdersCount: completedOrders.length,
+            totalSpent,
+            orders: custOrders.map(enrichOrderWithAlgiersTime),
+          };
+        }),
+      );
+
+      res.json({
+        customers: enriched,
+        totalCount: enriched.length,
+      });
+      return;
+    } catch (err) {
+      console.error('[Postgres Management Customers Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const cleanPhone = query.replace(/[\s\-()+.]/g, '');
 
   let accounts = [...db.accounts];
@@ -4710,17 +5402,69 @@ app.get('/api/management/customers', adminLimiter, requireRole(['ADMIN']), (req:
 });
 
 // 4. PATCH Update Customer Account Status / Tier / Profile (ADMIN ONLY)
-app.patch('/api/management/customers/:customerId', adminLimiter, requireRole(['ADMIN']), (req: Request, res: Response) => {
-  const db = loadDatabase();
+app.patch('/api/management/customers/:customerId', adminLimiter, requireRole(['ADMIN']), async (req: Request, res: Response) => {
   const customerId = String(req.params.customerId || '').trim();
+  const { name, email, favouriteDrink, loyaltyStatus, accountStatus } = req.body || {};
+
+  if (isPostgresConfigured()) {
+    try {
+      const statusToSet = loyaltyStatus || accountStatus;
+      if (statusToSet) {
+        await pgRepository.updateCustomerStatus(customerId, statusToSet);
+      }
+      if (name || email || favouriteDrink) {
+        await pgRepository.updateCustomerProfile(customerId, {
+          name: typeof name === 'string' && name.trim() ? name.trim().substring(0, 80) : undefined,
+          email: typeof email === 'string' && email.trim() ? email.trim().substring(0, 100) : undefined,
+          favouriteDrink: typeof favouriteDrink === 'string' && favouriteDrink.trim() ? favouriteDrink.trim().substring(0, 60) : undefined,
+        });
+      }
+      if (accountStatus === 'Suspended') {
+        revokeCustomerSessions(customerId);
+      }
+      const updatedCust = await pgRepository.getCustomerById(customerId);
+      if (updatedCust) {
+        logAuditEvent('ADMIN_CUSTOMER_UPDATED', {
+          customerId,
+          loyaltyStatus: updatedCust.status,
+          accountStatus: updatedCust.status,
+          adminId: req.user?.adminId || 'VENTY-ADMIN',
+        });
+        res.json({
+          success: true,
+          customer: {
+            customerId: updatedCust.customerId,
+            name: updatedCust.name,
+            phone: updatedCust.phone,
+            email: updatedCust.email || '',
+            favouriteDrink: updatedCust.favouriteDrink || 'Flat White',
+            currentStampCount: updatedCust.currentStampCount,
+            lifetimeStamps: updatedCust.lifetimeStamps,
+            loyaltyStatus: updatedCust.status,
+            accountStatus: updatedCust.status === 'Suspended' ? 'Suspended' : 'Active',
+            createdAt: updatedCust.createdAt,
+            updatedAt: updatedCust.updatedAt,
+            availableRewards: updatedCust.availableRewards,
+            redeemedRewards: updatedCust.redeemedRewards,
+          },
+          message: `Customer ${updatedCust.name} (${updatedCust.customerId}) updated.`,
+        });
+        return;
+      }
+      res.status(404).json({ error: 'Not Found', message: 'Customer account not found.' });
+      return;
+    } catch (err) {
+      console.error('[Postgres Admin Update Customer Error]', err);
+    }
+  }
+
+  const db = loadDatabase();
   const account = db.accounts.find((a) => a.customerId === customerId);
 
   if (!account) {
     res.status(404).json({ error: 'Not Found', message: 'Customer account not found.' });
     return;
   }
-
-  const { name, email, favouriteDrink, loyaltyStatus, accountStatus } = req.body || {};
 
   if (typeof name === 'string' && name.trim()) {
     account.name = name.trim().substring(0, 80);
@@ -5481,7 +6225,25 @@ app.post('/api/management/staff/revoke-sessions', adminLimiter, requireRole(['AD
 });
 
 // 11. GET & PUT Store & Loyalty Settings (ADMIN ONLY)
-app.get('/api/management/settings', adminLimiter, requireRole(['ADMIN']), (_req: Request, res: Response) => {
+app.get('/api/management/settings', adminLimiter, requireRole(['ADMIN']), async (_req: Request, res: Response) => {
+  if (isPostgresConfigured()) {
+    try {
+      const pgLoyaltyCfg = await pgRepository.getSetting('loyaltyConfig');
+      const pgStoreSets = await pgRepository.getSetting('storeSettings');
+      if (pgLoyaltyCfg || pgStoreSets) {
+        const dbFallback = loadDatabase();
+        const extDbFallback = ensureManagementCollections(dbFallback);
+        res.json({
+          loyaltyConfig: pgLoyaltyCfg || dbFallback.config,
+          storeSettings: pgStoreSets || extDbFallback.storeSettings,
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[Postgres Get Settings Error]', err);
+    }
+  }
+
   const db = loadDatabase();
   const extDb = ensureManagementCollections(db);
   res.json({
@@ -5490,7 +6252,7 @@ app.get('/api/management/settings', adminLimiter, requireRole(['ADMIN']), (_req:
   });
 });
 
-app.put('/api/management/settings', adminLimiter, requireRole(['ADMIN']), (req: Request, res: Response) => {
+app.put('/api/management/settings', adminLimiter, requireRole(['ADMIN']), async (req: Request, res: Response) => {
   const db = loadDatabase();
   const extDb = ensureManagementCollections(db);
   const { loyaltyConfig, storeSettings } = req.body || {};
@@ -5548,8 +6310,16 @@ app.put('/api/management/settings', adminLimiter, requireRole(['ADMIN']), (req: 
     if (typeof storeSettings.notifyOnRewardRedemption === 'boolean') {
       extDb.storeSettings.notifyOnRewardRedemption = storeSettings.notifyOnRewardRedemption;
     }
-    // Always preserve Africa/Algiers as authoritative operational timezone
     extDb.storeSettings.timezone = VENTY_TIMEZONE;
+  }
+
+  if (isPostgresConfigured()) {
+    try {
+      await pgRepository.setSetting('loyaltyConfig', db.config);
+      await pgRepository.setSetting('storeSettings', extDb.storeSettings);
+    } catch (err) {
+      console.error('[Postgres Set Settings Error]', err);
+    }
   }
 
   saveDatabase(db);
@@ -5566,6 +6336,91 @@ app.put('/api/management/settings', adminLimiter, requireRole(['ADMIN']), (req: 
     storeSettings: extDb.storeSettings,
     message: 'VENTY store and loyalty configuration saved.',
   });
+});
+
+// GET Database Status & Health Check (Safe, Never Exposes Secrets or URLs)
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const isPg = isPostgresConfigured();
+  let pgStatus = 'NOT_CONFIGURED';
+  let latencyMs: number | undefined;
+  let pgVersion: string | undefined;
+  let counts: Record<string, number> | undefined;
+
+  if (isPg) {
+    try {
+      const ping = await testConnection();
+      if (ping.success) {
+        pgStatus = 'CONNECTED';
+        latencyMs = ping.latencyMs;
+        pgVersion = ping.version ? ping.version.split(' ')[0] : undefined;
+
+        try {
+          const tables = [
+            'customers',
+            'loyalty_accounts',
+            'loyalty_transactions',
+            'rewards',
+            'orders',
+            'order_items',
+            'store_settings',
+            'customer_sessions',
+          ];
+          const rowCounts: Record<string, number> = {};
+          for (const tbl of tables) {
+            const r = await query(`SELECT COUNT(*) as count FROM ${tbl}`);
+            rowCounts[tbl] = Number(r.rows[0]?.count || 0);
+          }
+          counts = rowCounts;
+        } catch {
+          // Non-critical metric gathering failure
+        }
+      } else {
+        pgStatus = 'CONNECTION_ERROR';
+      }
+    } catch {
+      pgStatus = 'CONNECTION_ERROR';
+    }
+  }
+
+  res.json({
+    status: 'OK',
+    serverTimestamp: new Date().toISOString(),
+    databaseMode: isPg ? 'POSTGRES_SERVERLESS' : 'LOCAL_FALLBACK',
+    postgres: {
+      configured: isPg,
+      status: pgStatus,
+      latencyMs,
+      version: pgVersion,
+      tableCounts: counts,
+    },
+  });
+});
+
+app.get('/api/db/status', async (_req: Request, res: Response) => {
+  const isPg = isPostgresConfigured();
+  if (!isPg) {
+    res.json({
+      configured: false,
+      message: 'DATABASE_URL is not set. Running in local file/memory fallback mode.',
+    });
+    return;
+  }
+
+  try {
+    const ping = await testConnection();
+    res.json({
+      configured: true,
+      connected: ping.success,
+      latencyMs: ping.latencyMs,
+      error: ping.error ? 'Connection check failed' : undefined,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      configured: true,
+      connected: false,
+      error: err?.message || 'Database ping error',
+    });
+  }
 });
 
 // 12. GET Security & Audit Log (ADMIN ONLY — Strictly Redacted, Never Exposes Secrets)

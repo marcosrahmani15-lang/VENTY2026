@@ -237,7 +237,7 @@ export const pgRepository = {
 
   async updateCustomerProfile(
     customerId: string,
-    updates: { name?: string; email?: string | null; favouriteDrink?: string | null },
+    updates: { name?: string; email?: string | null; favouriteDrink?: string | null; phone?: string | null },
   ): Promise<CustomerRecord | null> {
     const sets: string[] = [];
     const values: any[] = [];
@@ -254,6 +254,10 @@ export const pgRepository = {
     if (updates.favouriteDrink !== undefined) {
       sets.push(`favourite_drink = $${idx++}`);
       values.push(updates.favouriteDrink);
+    }
+    if (updates.phone !== undefined) {
+      sets.push(`phone = $${idx++}`);
+      values.push(updates.phone);
     }
 
     if (sets.length === 0) return this.getCustomerById(customerId);
@@ -333,6 +337,7 @@ export const pgRepository = {
     offset?: number;
     status?: string;
     customerId?: string;
+    search?: string;
   } = {}): Promise<OrderRecord[]> {
     const where: string[] = [];
     const values: any[] = [];
@@ -345,6 +350,11 @@ export const pgRepository = {
     if (options.customerId) {
       where.push(`customer_id = $${idx++}`);
       values.push(options.customerId);
+    }
+    if (options.search) {
+      where.push(`(customer_name ILIKE $${idx} OR customer_phone ILIKE $${idx} OR id ILIKE $${idx})`);
+      values.push(`%${options.search}%`);
+      idx++;
     }
 
     const limit = Math.min(Math.max(options.limit || 50, 1), 200);
@@ -371,6 +381,7 @@ export const pgRepository = {
     customerPhone?: string | null;
     pickupTime?: string;
     notes?: string | null;
+    status?: string;
     qualifiesForLoyalty: boolean;
     idempotencyKey?: string;
     payloadFingerprint?: string;
@@ -403,18 +414,21 @@ export const pgRepository = {
         if (cCheck.rows.length === 0) validCustomerId = null;
       }
 
+      const initialStatus = (params.status || 'PENDING').toUpperCase();
+
       await client.query(
         `INSERT INTO orders (
           id, customer_id, customer_name, customer_phone, total_amount, status,
           pickup_time, notes, qualifies_for_loyalty, idempotency_key, payload_fingerprint,
           created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, 'PENDING', $6, $7, $8, $9, $10, NOW(), NOW())`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`,
         [
           params.orderId,
           validCustomerId,
           params.customerName,
           params.customerPhone || null,
           totalAmount,
+          initialStatus,
           params.pickupTime || '15 mins',
           params.notes || null,
           params.qualifiesForLoyalty,
@@ -462,10 +476,17 @@ export const pgRepository = {
   async updateOrderStatus(
     orderId: string,
     nextStatus: string,
-    options: { stampsToReward?: number; stampsPerOrder?: number } = {},
+    options: {
+      stampsToReward?: number;
+      stampsPerOrder?: number;
+      allowAdminCancellation?: boolean;
+      cancellationReason?: string;
+      actorId?: string;
+    } = {},
   ): Promise<{
     order: OrderRecord;
     loyaltyAwarded: boolean;
+    loyaltyReversed?: boolean;
     customerAccount?: CustomerRecord | null;
   }> {
     const stampsToReward = options.stampsToReward || 7;
@@ -485,13 +506,18 @@ export const pgRepository = {
 
       // Guard terminal states
       if (currentStatus === 'COMPLETED' && nextStatus !== 'COMPLETED') {
-        throw new Error(`Order #${orderId} is already COMPLETED and cannot transition backwards.`);
+        if (nextStatus === 'CANCELLED' && options.allowAdminCancellation) {
+          // Allowed for admin reversal
+        } else {
+          throw new Error(`Order #${orderId} is already COMPLETED and cannot transition backwards.`);
+        }
       }
       if (currentStatus === 'CANCELLED' && nextStatus !== 'CANCELLED') {
         throw new Error(`Order #${orderId} has been CANCELLED and cannot transition backwards.`);
       }
 
       let loyaltyAwarded = false;
+      let loyaltyReversed = false;
       let newLoyaltyTxId: string | null = order.loyalty_transaction_id;
       let customerRecord: CustomerRecord | null = null;
 
@@ -577,6 +603,50 @@ export const pgRepository = {
         }
       }
 
+      // If transitioning to CANCELLED and was previously awarded a stamp
+      if (nextStatus === 'CANCELLED' && order.loyalty_stamp_awarded && order.customer_id) {
+        const custRes = await client.query(
+          `SELECT c.id, c.name, l.current_stamp_count, l.lifetime_stamps
+           FROM customers c
+           JOIN loyalty_accounts l ON c.id = l.customer_id
+           WHERE c.id = $1 FOR UPDATE`,
+          [order.customer_id],
+        );
+        if (custRes.rows.length > 0) {
+          const cust = custRes.rows[0];
+          const deltaToReverse = Number(order.loyalty_stamps_delta || stampsPerOrder || 1);
+          const prevStamps = Number(cust.current_stamp_count);
+          const newStamps = Math.max(0, prevStamps - deltaToReverse);
+          const newLifetime = Math.max(0, Number(cust.lifetime_stamps) - deltaToReverse);
+
+          await client.query(
+            `UPDATE loyalty_accounts
+             SET current_stamp_count = $1, lifetime_stamps = $2, updated_at = NOW()
+             WHERE customer_id = $3`,
+            [newStamps, newLifetime, order.customer_id],
+          );
+
+          newLoyaltyTxId = `LTX-${Date.now().toString(36).toUpperCase()}-REV`;
+          await client.query(
+            `INSERT INTO loyalty_transactions (
+               id, customer_id, customer_name, type, stamps_delta, source, status,
+               order_id, note, previous_value, new_value, created_at
+             ) VALUES ($1, $2, $3, 'REVERSAL', $4, 'SYSTEM', 'CONFIRMED', $5, $6, $7, $8, NOW())`,
+            [
+              newLoyaltyTxId,
+              order.customer_id,
+              cust.name,
+              -deltaToReverse,
+              orderId,
+              `Reversal of Order #${orderId}: -${deltaToReverse} Stamp (${options.cancellationReason || 'Order cancelled'})`,
+              prevStamps,
+              newStamps,
+            ],
+          );
+          loyaltyReversed = true;
+        }
+      }
+
       // Update order status
       const completedAt = nextStatus === 'COMPLETED' ? new Date() : order.completed_at;
       const cancelledAt = nextStatus === 'CANCELLED' ? new Date() : order.cancelled_at;
@@ -595,8 +665,8 @@ export const pgRepository = {
           nextStatus,
           completedAt,
           cancelledAt,
-          loyaltyAwarded ? true : order.loyalty_stamp_awarded,
-          loyaltyAwarded ? stampsPerOrder : order.loyalty_stamps_delta,
+          loyaltyAwarded ? true : (nextStatus === 'CANCELLED' ? false : order.loyalty_stamp_awarded),
+          loyaltyAwarded ? stampsPerOrder : (nextStatus === 'CANCELLED' ? 0 : order.loyalty_stamps_delta),
           newLoyaltyTxId,
           orderId,
         ],
@@ -610,6 +680,7 @@ export const pgRepository = {
       return {
         order: updatedOrder!,
         loyaltyAwarded,
+        loyaltyReversed,
         customerAccount: customerRecord,
       };
     });
